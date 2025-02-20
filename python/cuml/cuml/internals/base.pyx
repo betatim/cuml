@@ -704,6 +704,11 @@ class UniversalBase(Base):
                 is_cuda_available()
             ]
         ):
+            cuml_param_names = self.get_param_names()
+            for param, value in self._cpu_model.get_params().items():
+                if param in cuml_param_names:
+                    self.set_params(**{param: value})
+
             for attr in self.get_attr_names():
                 # check presence of attribute
                 if hasattr(self._cpu_model, attr) or \

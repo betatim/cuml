@@ -72,14 +72,20 @@ def assert_estimator_roundtrip(
     else:
         cuml_model.fit(X)
 
+    original_params = cuml_model.get_params()
+
     # Convert to sklearn model
     sklearn_model = cuml_model.as_sklearn()
     check_is_fitted(sklearn_model)
+    print(f"{sklearn_model.get_params()=}")
 
     assert isinstance(sklearn_model, sklearn_class)
 
     # Convert back
     roundtrip_model = type(cuml_model).from_sklearn(sklearn_model)
+    print(f"{roundtrip_model.get_params()=}")
+
+    assert original_params == roundtrip_model.get_params()
 
     # Ensure roundtrip model is fitted
     check_is_fitted(roundtrip_model)
@@ -115,7 +121,7 @@ def test_kmeans(random_state):
     X, _ = make_blobs(
         n_samples=50, n_features=2, centers=3, random_state=random_state
     )
-    original = KMeans(n_clusters=3, random_state=random_state)
+    original = KMeans(n_clusters=3, random_state=random_state, n_init="auto")
     assert_estimator_roundtrip(original, SkKMeans, X)
 
 
