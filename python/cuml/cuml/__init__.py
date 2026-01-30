@@ -99,6 +99,18 @@ def __getattr__(name):
             FutureWarning,
         )
         return Handle
+    elif name == "foo":
+        import warnings
+
+        import cuml._foo as _foo
+
+        warnings.warn(
+            "The 'cuml.foo' module is deprecated and will be removed in 26.06. "
+            "Please use 'cuml._foo' instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return _foo
 
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
