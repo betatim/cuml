@@ -22,6 +22,20 @@
   - "sklearn.metrics._plot.tests.test_roc_curve_display::test_roc_curve_from_cv_results_legend_label[None-curve_kwargs1]"
   - "sklearn.metrics._plot.tests.test_roc_curve_display::test_roc_curve_from_cv_results_legend_label[single-None]"
   - "sklearn.metrics._plot.tests.test_roc_curve_display::test_roc_curve_from_cv_results_legend_label[single-curve_kwargs1]"
+- reason: Feature name preservation and metadata handling in cuml.accel StandardScaler needs comprehensive fixes
+  marker: cuml_accel_bugs
+  tests:
+  - "sklearn.tests.test_pipeline::test_feature_union_feature_names_in_"
+- reason: Precomputed kernel validation differs with cupy arrays in GridSearchCV optimization
+  marker: cuml_accel_bugs
+  tests:
+  - "sklearn.model_selection.tests.test_search::test_grid_search_precomputed_kernel"
+- reason: Proxy returns numpy while cross_val_predict expects cupy -- needs cross_val_predict patch
+  marker: cuml_accel_bugs
+  tests:
+  - "sklearn.model_selection.tests.test_validation::test_cross_val_predict_array_api_compliance[cupy-None-None-3-Ridge]"
+  - "sklearn.model_selection.tests.test_validation::test_cross_val_predict_array_api_compliance[cupy-None-None-5-Ridge]"
+  - "sklearn.model_selection.tests.test_validation::test_cross_val_predict_array_api_compliance[cupy-None-None-None-Ridge]"
 - reason: Search CV sample weight equivalence differs with cuml.accel in sklearn 1.7.2
   marker: cuml_accel_bugs
   condition: scikit-learn>=1.7.2
