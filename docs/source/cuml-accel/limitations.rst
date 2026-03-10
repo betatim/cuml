@@ -354,6 +354,8 @@ GridSearchCV
 
 - If ``X`` is sparse or contains non-numeric data.
 - If ``y`` is sparse or contains non-numeric data.
+- If ``n_jobs`` is set to a value other than 1 or ``None``.
+- If ``scoring`` contains user-provided callables.
 - If the installed scikit-learn version is less than 1.8.
 
 

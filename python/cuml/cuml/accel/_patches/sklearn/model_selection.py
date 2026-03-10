@@ -50,6 +50,22 @@ def _enable_scipy_array_api():
         _scipy_array_api._GLOBAL_CONFIG["SCIPY_ARRAY_API"] = old_cached
 
 
+def _has_custom_scorer(scoring):
+    """Determine if scoring contains user-provided callables.
+
+    Custom scorers expect numpy arrays, but the array API path
+    uses cupy arrays. Bail out of the optimization so the user's
+    code runs unchanged on CPU.
+    """
+    if scoring is None or isinstance(scoring, str):
+        return False
+    if isinstance(scoring, (list, tuple)):
+        return not all(isinstance(s, str) for s in scoring)
+    if isinstance(scoring, dict):
+        return not all(isinstance(v, str) for v in scoring.values())
+    return True
+
+
 def _contains_proxy(estimator):
     """Check if an estimator can benefit from the cupy data path.
 
@@ -104,6 +120,10 @@ def _patch_fit(cls):
                 f"`GridSearchCV.fit` not optimized: n_jobs={self.n_jobs} "
                 f"(set n_jobs=1 for GPU acceleration)"
             )
+            return orig_fit(self, X, y, **params)
+
+        if _has_custom_scorer(self.scoring):
+            logger.debug("`GridSearchCV.fit` not optimized: custom scorer")
             return orig_fit(self, X, y, **params)
 
         # Pre-check for bare proxies: does any param combination support GPU?

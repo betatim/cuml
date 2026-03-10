@@ -186,7 +186,7 @@ def test_grid_search_custom_scorer(regression_data):
     scorer_arg_types = []
 
     def my_metric(y_true, y_pred):
-        scorer_arg_types.append((type(y_true).__name__, type(y_pred).__name__))
+        scorer_arg_types.append((y_true, y_pred))
         return -np.mean((y_true - y_pred) ** 2)
 
     X, y = regression_data
@@ -198,9 +198,17 @@ def test_grid_search_custom_scorer(regression_data):
     )
     gs.fit(X, y)
 
+    def _qualname(arr):
+        t = type(arr)
+        return f"{t.__module__}.{t.__name__}"
+
     assert all(
-        yt == "ndarray" and yp == "ndarray" for yt, yp in scorer_arg_types
-    ), f"Expected all numpy in scorer, got {scorer_arg_types}"
+        isinstance(yt, np.ndarray) and isinstance(yp, np.ndarray)
+        for yt, yp in scorer_arg_types
+    ), (
+        "Expected all numpy in scorer, got scorer_arg_types: "
+        f"{[(_qualname(yt), _qualname(yp)) for yt, yp in scorer_arg_types]}"
+    )
     assert not np.isnan(gs.best_score_)
 
 
