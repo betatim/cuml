@@ -346,6 +346,8 @@ GridSearchCV
 
 - If ``X`` is sparse or contains non-numeric data.
 - If ``y`` is sparse or contains non-numeric data.
+- If ``estimator`` is not a proxy estimator or if one or more steps in a ``Pipeline``
+  are not proxy estimators.
 - If ``n_jobs`` is set to a value other than 1 or ``None``.
 - If ``scoring`` contains user-provided callables.
 - If the installed scikit-learn version is less than 1.8.
