@@ -10,13 +10,12 @@ import scipy._lib._array_api as _scipy_array_api
 import scipy.sparse
 import sklearn
 from packaging.version import Version
-from sklearn.model_selection import GridSearchCV, ParameterGrid
+from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
 from cuml.accel.core import logger
 from cuml.accel.estimator_proxy import ensure_host, is_proxy
 from cuml.internals.global_settings import GlobalSettings
-from cuml.internals.interop import UnsupportedOnGPU
 from cuml.internals.outputs import using_output_type
 
 AT_LEAST_SKLEARN_18 = Version(sklearn.__version__) >= Version("1.8.0")
@@ -126,30 +125,6 @@ def _patch_fit(cls):
             logger.debug("`GridSearchCV.fit` not optimized: custom scorer")
             return orig_fit(self, X, y, **params)
 
-        # Pre-check for bare proxies: does any param combination support GPU?
-        # For Pipelines this is skipped -- the Pipeline patch handles
-        # per-step fallback internally.
-        if is_proxy(self.estimator):
-            gpu_class = type(self.estimator)._gpu_class
-            any_gpu = False
-            for candidate in ParameterGrid(self.param_grid):
-                try:
-                    cpu_clone = sklearn.clone(self.estimator._cpu).set_params(
-                        **candidate
-                    )
-                    gpu_class._params_from_cpu(cpu_clone)
-                    any_gpu = True
-                    break
-                except UnsupportedOnGPU:
-                    continue
-            if not any_gpu:
-                logger.debug(
-                    f"`GridSearchCV.fit` not optimized: no parameter "
-                    f"combinations in the grid support GPU for "
-                    f"`{estimator_name}`"
-                )
-                return orig_fit(self, X, y, **params)
-
         logger.debug(
             f"`GridSearchCV.fit` input data moved to GPU as some "
             f"parameter combinations support acceleration for "
@@ -157,7 +132,6 @@ def _patch_fit(cls):
         )
 
         X_gpu = cp.asarray(X) if not isinstance(X, cp.ndarray) else X
-        # XXX can we just leave y, because "everything follows X"?
         y_gpu = (
             cp.asarray(y)
             if y is not None and not isinstance(y, cp.ndarray)
