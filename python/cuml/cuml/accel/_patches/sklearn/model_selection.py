@@ -16,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from cuml.accel.core import logger
 from cuml.accel.estimator_proxy import ensure_host, is_proxy
 from cuml.internals.global_settings import GlobalSettings
+from cuml.internals.input_utils import is_array_like
 from cuml.internals.outputs import using_output_type
 
 AT_LEAST_SKLEARN_18 = Version(sklearn.__version__) >= Version("1.8.0")
@@ -137,12 +138,12 @@ def _patch_fit(cls):
             if y is not None and not isinstance(y, cp.ndarray)
             else y
         )
-        # Convert array-like params (e.g. sample_weight) to cupy so scoring
-        # metrics see consistent array types. Exclude "groups" which goes to
+        # Convert array-like params (e.g. sample_weight) to cupy so CV
+        # splitting with cupy indices works. Exclude "groups" which goes to
         # the CV splitter and must stay on host.
         params = {
             k: cp.asarray(v)
-            if isinstance(v, np.ndarray) and k != "groups"
+            if k != "groups" and is_array_like(v, accept_lists=True)
             else v
             for k, v in params.items()
         }
