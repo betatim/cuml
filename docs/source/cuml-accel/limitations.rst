@@ -342,7 +342,7 @@ sklearn.model_selection
 GridSearchCV
 ^^^^^^^^^^^^
 
-``GridSearchCV`` will fall back to CPU in the following cases:
+``GridSearchCV`` will not optimize data transfers in the following cases:
 
 - If ``X`` is sparse or contains non-numeric data.
 - If ``y`` is sparse or contains non-numeric data.
