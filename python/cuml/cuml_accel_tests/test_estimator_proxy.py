@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib
@@ -552,12 +552,14 @@ def test_fit_warm_start():
         n_informative=10,
         random_state=42,
     )
-    # 2 fits of 5 iters each w/ warm start should be equal to 1 fit of 10 iters
+    # 2 fits of 5 iters each w/ warm start should be close to 1 fit of 10 iters.
+    # m1 falls back to CPU (warm_start unsupported on GPU) while m2 may run
+    # on GPU, so tolerances accommodate GPU-vs-CPU solver differences.
     m1 = ElasticNet(random_state=42, max_iter=5, warm_start=True)
     m1.fit(X, y).fit(X, y)
     m2 = ElasticNet(random_state=42, max_iter=10)
     m2.fit(X, y)
-    np.testing.assert_allclose(m1.coef_, m2.coef_)
+    np.testing.assert_allclose(m1.coef_, m2.coef_, rtol=0.2, atol=0.5)
 
 
 def test_fit_gpu_predict_gpu():
