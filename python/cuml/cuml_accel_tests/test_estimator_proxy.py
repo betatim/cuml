@@ -557,8 +557,12 @@ def test_fit_warm_start():
     # on GPU, so tolerances accommodate GPU-vs-CPU solver differences.
     m1 = ElasticNet(random_state=42, max_iter=5, warm_start=True)
     m1.fit(X, y).fit(X, y)
+    assert m1._gpu is None, "warm_start=True should fall back to CPU"
+
     m2 = ElasticNet(random_state=42, max_iter=10)
     m2.fit(X, y)
+    assert m2._gpu is not None, "default ElasticNet should run on GPU"
+
     np.testing.assert_allclose(m1.coef_, m2.coef_, rtol=0.2, atol=0.5)
 
 
