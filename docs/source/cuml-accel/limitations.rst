@@ -47,12 +47,7 @@ A few additional general notes:
   On very small datasets you might see only a small speedup (or even
   potentially a slowdown).
 
-- For most algorithms, ``y`` must already be converted to numeric values;
-  arrays of strings are not supported. Pre-encode string labels into numerical
-  or categorical formats (e.g., using scikit-learn's LabelEncoder) prior to
-  processing.
-
-- The accelerator is tested to be compatible with scikit-learn versions 1.4
+- The accelerator is tested to be compatible with scikit-learn versions 1.5
   through 1.8. This ensures that cuML's implementation of scikit-learn
   compatible APIs works as expected.
 
@@ -251,7 +246,6 @@ LinearRegression
 ``LinearRegression`` will fall back to CPU in the following cases:
 
 - If ``positive=True``.
-- If ``X`` is sparse.
 
 Additionally, the following fitted attributes are currently not computed:
 
@@ -275,7 +269,6 @@ ElasticNet
 - If ``positive=True``.
 - If ``warm_start=True``.
 - If ``precompute`` is not ``False``.
-- If ``X`` is sparse.
 
 Additionally, the following fitted attributes are currently not computed:
 
@@ -287,7 +280,6 @@ Ridge
 ``Ridge`` will fall back to CPU in the following cases:
 
 - If ``positive=True`` or ``solver="lbfgs"``.
-- If ``X`` is sparse.
 
 Lasso
 ^^^^^
@@ -297,7 +289,6 @@ Lasso
 - If ``positive=True``.
 - If ``warm_start=True``.
 - If ``precompute`` is not ``False``.
-- If ``X`` is sparse.
 
 Additionally, the following fitted attributes are currently not computed:
 
