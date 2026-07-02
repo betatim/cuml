@@ -45,7 +45,7 @@ _metrics_mapping = {
 }
 
 
-class AgglomerativeClustering(Base, ClusterMixin, CMajorInputTagMixin):
+class AgglomerativeClustering(ClusterMixin, CMajorInputTagMixin, Base):
     """
     Agglomerative Clustering
 
@@ -138,8 +138,8 @@ class AgglomerativeClustering(Base, ClusterMixin, CMajorInputTagMixin):
         self.c = c
 
     @generate_docstring()
-    @reflect(reset="type")
-    def fit(self, X, y=None, *, convert_dtype=True) -> "AgglomerativeClustering":
+    @reflect(reset=True)
+    def fit(self, X, y=None, *, convert_dtype="deprecated") -> "AgglomerativeClustering":
         """
         Fit the hierarchical clustering from features.
         """

@@ -27,11 +27,11 @@ SKLEARN_18 = Version(sklearn.__version__) >= Version("1.8.0.dev0")
 
 
 class LogisticRegression(
-    Base,
     InteropMixin,
     LinearClassifierMixin,
     ClassifierMixin,
     SparseInputTagMixin,
+    Base,
 ):
     """Logistic Regression classifier.
 
@@ -295,9 +295,9 @@ class LogisticRegression(
         return l1_strength, l2_strength
 
     @generate_docstring(X="dense_sparse")
-    @cuml.internals.reflect(reset="type")
+    @cuml.internals.reflect(reset=True)
     def fit(
-        self, X, y, sample_weight=None, *, convert_dtype=True
+        self, X, y, sample_weight=None, *, convert_dtype="deprecated"
     ) -> "LogisticRegression":
         """
         Fit the model with X and y.
@@ -341,14 +341,14 @@ class LogisticRegression(
         },
     )
     @cuml.internals.run_in_internal_context
-    def predict(self, X, *, convert_dtype=True):
+    def predict(self, X, *, convert_dtype="deprecated"):
         """
         Predicts the y for X.
 
         """
-        scores = self.decision_function(
-            X, convert_dtype=convert_dtype
-        ).to_output("cupy")
+        scores = self.decision_function(X, convert_dtype=convert_dtype)
+        index = scores.index
+        scores = scores.to_output("cupy")
 
         if scores.ndim == 1:
             indices = (scores > 0).view(cp.int8)
@@ -357,7 +357,9 @@ class LogisticRegression(
 
         with cuml.internals.exit_internal_context():
             output_type = self._get_output_type(X)
-        return decode_labels(indices, self.classes_, output_type=output_type)
+        return decode_labels(
+            indices, self.classes_, output_type=output_type, index=index
+        )
 
     @generate_docstring(
         X="dense_sparse",
@@ -369,7 +371,7 @@ class LogisticRegression(
         },
     )
     @cuml.internals.reflect
-    def predict_proba(self, X, *, convert_dtype=True) -> CumlArray:
+    def predict_proba(self, X, *, convert_dtype="deprecated") -> CumlArray:
         """
         Predicts the class probabilities for each class in X
         """
@@ -399,7 +401,7 @@ class LogisticRegression(
         },
     )
     @cuml.internals.reflect
-    def predict_log_proba(self, X, *, convert_dtype=True) -> CumlArray:
+    def predict_log_proba(self, X, *, convert_dtype="deprecated") -> CumlArray:
         """
         Predicts the log class probabilities for each class in X
         """

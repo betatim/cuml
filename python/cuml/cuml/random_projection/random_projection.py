@@ -48,7 +48,7 @@ def johnson_lindenstrauss_min_dim(n_samples, eps=0.1):
     )
 
 
-class _BaseRandomProjection(Base, SparseInputTagMixin):
+class _BaseRandomProjection(SparseInputTagMixin, Base):
     """Base class for RandomProjection estimators."""
 
     components_ = CumlArrayDescriptor()
@@ -80,8 +80,8 @@ class _BaseRandomProjection(Base, SparseInputTagMixin):
         raise NotImplementedError
 
     @generate_docstring()
-    @reflect(reset="type")
-    def fit(self, X, y=None, *, convert_dtype=True):
+    @reflect(reset=True)
+    def fit(self, X, y=None, *, convert_dtype="deprecated"):
         """Generate a random projection matrix."""
         # Use `mem_type=None` & `order=None` to minimize copies or transfers. We
         # don't need to access the data here, just ensure it's valid and get
@@ -94,6 +94,7 @@ class _BaseRandomProjection(Base, SparseInputTagMixin):
             mem_type=None,
             order=None,
             accept_sparse=True,
+            accept_large_sparse=True,
             reset=True,
         )
         n_samples, n_features = X.shape
@@ -124,7 +125,7 @@ class _BaseRandomProjection(Base, SparseInputTagMixin):
 
     @generate_docstring()
     @reflect
-    def transform(self, X, *, convert_dtype=True) -> CumlArray:
+    def transform(self, X, *, convert_dtype="deprecated") -> CumlArray:
         """Project the data by taking the matrix product with the random matrix."""
         check_is_fitted(self)
         X, index = check_inputs(
@@ -133,6 +134,7 @@ class _BaseRandomProjection(Base, SparseInputTagMixin):
             dtype=("float32", "float64"),
             convert_dtype=convert_dtype,
             accept_sparse=("csr", "csc"),
+            accept_large_sparse=True,
             return_index=True,
         )
         components = self.components_.to_output("cupy")
@@ -155,7 +157,9 @@ class _BaseRandomProjection(Base, SparseInputTagMixin):
 
     @generate_docstring()
     @reflect
-    def fit_transform(self, X, y=None, *, convert_dtype=True) -> CumlArray:
+    def fit_transform(
+        self, X, y=None, *, convert_dtype="deprecated"
+    ) -> CumlArray:
         """Fit to data, then transform it."""
         return self.fit(X, convert_dtype=convert_dtype).transform(
             X, convert_dtype=convert_dtype

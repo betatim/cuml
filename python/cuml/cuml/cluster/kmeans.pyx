@@ -23,12 +23,26 @@ from cuml.internals.validation import (
     check_random_seed,
 )
 
+from libc.limits cimport INT_MAX
 from libc.stdint cimport int64_t, uintptr_t
 from libcpp cimport bool
 from pylibraft.common.handle cimport handle_t
 
 cimport cuml.cluster.cpp.kmeans as lib
 from cuml.metrics.distance_type cimport DistanceType
+
+
+cdef inline bool _kmeans_indices_i32(int64_t n_rows, int64_t n_cols) noexcept nogil:
+    cdef int64_t int_max = INT_MAX
+
+    if n_rows < 0 or n_cols < 0:
+        return False
+    if n_rows > int_max or n_cols > int_max:
+        return False
+    if n_rows == 0 or n_cols == 0:
+        return True
+
+    return n_rows <= ((int_max - 1) // n_cols)
 
 
 cdef _kmeans_init_params(kmeans, lib.KMeansParams& params):
@@ -91,7 +105,7 @@ cdef _kmeans_fit(
     cdef int64_t n_cols = X.shape[1]
 
     cdef bool values_f32 = X.dtype == cp.float32
-    cdef bool indices_i32 = (n_rows * n_cols) < (2**31 - 1)
+    cdef bool indices_i32 = _kmeans_indices_i32(n_rows, n_cols)
 
     cdef uintptr_t X_ptr = X.data.ptr
     cdef uintptr_t centers_ptr = centers.data.ptr
@@ -169,11 +183,16 @@ cdef _kmeans_predict(
     """
     cdef int64_t n_rows = X.shape[0]
     cdef int64_t n_cols = X.shape[1]
+    cdef int64_t n_clusters = centers.shape[0]
 
-    labels = cp.zeros(
-        shape=n_rows,
-        dtype=(cp.int32 if n_rows * n_cols < 2**31 - 1 else cp.int64),
+    # Stop-gap: downstream predict code indexes both X and cluster_centers_
+    # using the selected index type. Keep the int32 path only when both
+    # matrices fit int32 indexing until large-shape support is fully covered.
+    cdef bool indices_i32 = (
+        _kmeans_indices_i32(n_rows, n_cols)
+        and _kmeans_indices_i32(n_clusters, n_cols)
     )
+    labels = cp.zeros(shape=n_rows, dtype=(cp.int32 if indices_i32 else cp.int64))
 
     cdef uintptr_t X_ptr = X.data.ptr
     cdef uintptr_t centers_ptr = centers.data.ptr
@@ -181,7 +200,6 @@ cdef _kmeans_predict(
     cdef uintptr_t labels_ptr = labels.data.ptr
 
     cdef bool values_f32 = X.dtype == cp.float32
-    cdef bool indices_i32 = labels.dtype == cp.int32
 
     cdef float inertia_f32 = 0
     cdef double inertia_f64 = 0
@@ -247,10 +265,10 @@ cdef _kmeans_predict(
     return labels, inertia
 
 
-class KMeans(Base,
-             InteropMixin,
+class KMeans(InteropMixin,
              ClusterMixin,
-             CMajorInputTagMixin):
+             CMajorInputTagMixin,
+             Base):
     """
     KMeans is a basic but powerful clustering method which is optimized via
     Expectation Maximization. It randomly selects K data points in X, and
@@ -288,7 +306,7 @@ class KMeans(Base,
         >>> # Calling fit
         >>> kmeans_float = KMeans(n_clusters=2, n_init="auto", random_state=1)
         >>> kmeans_float.fit(b)
-        KMeans()
+        KMeans(n_clusters=2, random_state=1)
         >>>
         >>> # Labels:
         >>> kmeans_float.labels_
@@ -512,8 +530,8 @@ class KMeans(Base,
         return self.n_clusters
 
     @generate_docstring()
-    @reflect(reset="type")
-    def fit(self, X, y=None, sample_weight=None, *, convert_dtype=True) -> "KMeans":
+    @reflect(reset=True)
+    def fit(self, X, y=None, sample_weight=None, *, convert_dtype="deprecated") -> "KMeans":
         """
         Compute k-means clustering with X.
 
@@ -592,7 +610,7 @@ class KMeans(Base,
         """
         return self.fit(X, sample_weight=sample_weight).labels_
 
-    def _predict_labels_inertia(self, X, convert_dtype=True, sample_weight=None):
+    def _predict_labels_inertia(self, X, convert_dtype="deprecated", sample_weight=None):
         """
         Predict the closest cluster each sample in X belongs to.
 
@@ -603,10 +621,12 @@ class KMeans(Base,
             Acceptable formats: cuDF DataFrame, NumPy ndarray, Numba device
             ndarray, cuda array interface compliant array like CuPy
 
-        convert_dtype : bool, optional (default = False)
-            When set to True, the predict method will, when necessary, convert
-            the input to the data type which was used to train the model. This
-            will increase memory used for the method.
+        convert_dtype : bool, default="deprecated"
+            .. deprecated:: 26.08
+                `convert_dtype` was deprecated in version 26.08 and will be
+                removed in version 26.10. cuML only copies input arrays when
+                necessary (e.g. to unify dtypes), there is no reason to provide
+                this keyword going forward.
 
         sample_weight : array-like (device or host) shape = (n_samples,), default=None # noqa
             The weights for each observation in X. If None, all observations
@@ -656,7 +676,7 @@ class KMeans(Base,
         self,
         X,
         *,
-        convert_dtype=True,
+        convert_dtype="deprecated",
     ) -> CumlArray:
         """
         Predict the closest cluster each sample in X belongs to.
@@ -670,7 +690,7 @@ class KMeans(Base,
                                        'description': 'Transformed data',
                                        'shape': '(n_samples, n_clusters)'})
     @reflect
-    def transform(self, X, *, convert_dtype=True) -> CumlArray:
+    def transform(self, X, *, convert_dtype="deprecated") -> CumlArray:
         """
         Transform X to a cluster-distance space.
 
@@ -686,9 +706,20 @@ class KMeans(Base,
 
         cdef int64_t n_rows = X.shape[0]
         cdef int64_t n_cols = X.shape[1]
+        cdef int64_t n_clusters = self.n_clusters
+
+        # Stop-gap: the current C++/cuVS transform path does not preserve
+        # int64 indexing end-to-end for the output matrix. Reject oversized
+        # outputs here until transform supports int64 output indexing.
+        if not _kmeans_indices_i32(n_rows, n_clusters):
+            raise NotImplementedError(
+                "KMeans.transform does not currently support output shapes "
+                "that require int64 indexing. Got output shape "
+                f"({n_rows}, {n_clusters})."
+            )
 
         out = cp.zeros(
-            shape=(n_rows, self.n_clusters), dtype=X.dtype, order="C",
+            shape=(n_rows, n_clusters), dtype=X.dtype, order="C",
         )
 
         cdef uintptr_t X_ptr = X.data.ptr
@@ -701,7 +732,7 @@ class KMeans(Base,
         _kmeans_init_params(self, params)
 
         cdef bool values_f32 = X.dtype == cp.float32
-        cdef bool indices_i32 = self.labels_.dtype == cp.int32
+        cdef bool indices_i32 = _kmeans_indices_i32(n_rows, n_cols)
 
         with nogil:
             if values_f32:
@@ -755,7 +786,7 @@ class KMeans(Base,
                                                         of X on the K-means \
                                                         objective.'})
     @run_in_internal_context
-    def score(self, X, y=None, sample_weight=None, *, convert_dtype=True):
+    def score(self, X, y=None, sample_weight=None, *, convert_dtype="deprecated"):
         """
         Opposite of the value of X on the K-means objective.
 
@@ -772,7 +803,7 @@ class KMeans(Base,
                                        'shape': '(n_samples, n_clusters)'})
     @reflect
     def fit_transform(
-        self, X, y=None, sample_weight=None, *, convert_dtype=False
+        self, X, y=None, sample_weight=None, *, convert_dtype="deprecated"
     ) -> CumlArray:
         """
         Compute clustering and transform X to cluster-distance space.

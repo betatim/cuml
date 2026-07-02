@@ -5,7 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../../cmake/rapids_config.cmake)
 
@@ -50,7 +50,6 @@ set(CUML_CPP_TARGET "cuml")
 set(CUML_CPP_SRC "../../cpp")
 
 # --- cuVS --- #
-set(CUML_USE_CUVS_STATIC ON)
 set(CUML_EXCLUDE_CUVS_FROM_ALL ON)
 
 # --- raft --- #
@@ -63,7 +62,6 @@ set(CUML_USE_TREELITE_STATIC ON)
 set(CUML_EXCLUDE_TREELITE_FROM_ALL ON)
 
 # --- CUDA --- #
-set(CUDA_STATIC_RUNTIME ON)
 set(CUDA_STATIC_MATH_LIBRARIES OFF)
 
 add_subdirectory(../../cpp cuml-cpp)
@@ -86,7 +84,6 @@ else()
       "$ORIGIN/../../nvidia/nvjitlink/lib"
   )
 endif()
-list(APPEND rpaths "$ORIGIN/../../nvidia/nccl/lib")
 
 set_property(
   TARGET ${CUML_CPP_TARGET}

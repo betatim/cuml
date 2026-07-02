@@ -5,7 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../../cmake/rapids_config.cmake)
 
@@ -15,11 +15,16 @@ include(rapids-cuda)
 rapids_cuda_init_architectures(cuml-python)
 list(APPEND language_list "CUDA")
 
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 project(
   cuml-python
   VERSION "${RAPIDS_VERSION}"
   LANGUAGES ${language_list}
 )
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ##################################################################################################
 # * User Options  --------------------------------------------------------------
@@ -95,7 +100,6 @@ add_subdirectory(cuml/datasets)
 add_subdirectory(cuml/decomposition)
 add_subdirectory(cuml/ensemble)
 add_subdirectory(cuml/explainer)
-add_subdirectory(cuml/fil)
 add_subdirectory(cuml/linear_model)
 add_subdirectory(cuml/manifold)
 add_subdirectory(cuml/metrics)

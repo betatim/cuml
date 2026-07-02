@@ -37,7 +37,7 @@ cdef extern from "cuml/solvers/lars.hpp" namespace "ML::Solver::Lars" nogil:
         math_t intercept, math_t* preds) except +
 
 
-class Lars(Base, RegressorMixin):
+class Lars(RegressorMixin, Base):
     """
     Least Angle Regression
 
@@ -200,8 +200,8 @@ class Lars(Base, RegressorMixin):
         return gram
 
     @generate_docstring(y="dense_anydtype")
-    @reflect(reset="type")
-    def fit(self, X, y, convert_dtype=True) -> "Lars":
+    @reflect(reset=True)
+    def fit(self, X, y, convert_dtype="deprecated") -> "Lars":
         """
         Fit the model with X and y.
 
@@ -339,7 +339,7 @@ class Lars(Base, RegressorMixin):
         }
     )
     @reflect
-    def predict(self, X, convert_dtype=True) -> CumlArray:
+    def predict(self, X, convert_dtype="deprecated") -> CumlArray:
         """Predicts `y` values for `X`."""
         check_is_fitted(self)
 

@@ -106,10 +106,10 @@ _SUPPORTED_ALGOS = {
 }
 
 
-class DBSCAN(Base,
-             InteropMixin,
+class DBSCAN(InteropMixin,
              ClusterMixin,
-             CMajorInputTagMixin):
+             CMajorInputTagMixin,
+             Base):
     """
     DBSCAN is a very powerful yet fast clustering technique that finds clusters
     where data is concentrated. This allows DBSCAN to generalize to many
@@ -138,7 +138,7 @@ class DBSCAN(Base,
         >>>
         >>> dbscan_float = DBSCAN(eps = 1.0, min_samples = 1)
         >>> dbscan_float.fit(gdf_float)
-        DBSCAN()
+        DBSCAN(eps=1.0, min_samples=1)
         >>> dbscan_float.labels_
         0    0
         1    1
@@ -298,7 +298,7 @@ class DBSCAN(Base,
         self.algorithm = algorithm
 
     @generate_docstring(skip_parameters_heading=True)
-    @reflect(reset="type")
+    @reflect(reset=True)
     def fit(
         self,
         X,
@@ -306,7 +306,7 @@ class DBSCAN(Base,
         sample_weight=None,
         *,
         out_dtype="int32",
-        convert_dtype=True
+        convert_dtype="deprecated"
     ) -> "DBSCAN":
         """
         Perform DBSCAN clustering from features.
@@ -487,7 +487,7 @@ class DBSCAN(Base,
         sample_weight=None,
         *,
         out_dtype="int32",
-        convert_dtype=True,
+        convert_dtype="deprecated",
     ) -> CumlArray:
         """
         Performs clustering on X and returns cluster labels.
