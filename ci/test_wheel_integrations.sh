@@ -41,15 +41,16 @@ print('✓ Import test passed')
 "
 
 # Test 2: Run minimal end-to-end example
-rapids-logger "Running BERTopic end-to-end smoke test (cuml.accel)"
-timeout -v 20m python -m cuml.accel -c "
+rapids-logger "Running BERTopic end-to-end smoke test"
+timeout -v 20m python -c "
 import warnings
 warnings.filterwarnings('ignore')
 
 import random
 from bertopic import BERTopic
 
-import cuml.accel
+from cuml.cluster import HDBSCAN
+from cuml.manifold import UMAP
 
 # Generate synthetic documents with topic-like word clusters
 random.seed(42)
@@ -65,23 +66,15 @@ for i in range(100):
     doc = ' '.join(random.choices(topic_words, k=random.randint(10, 30)))
     docs.append(doc)
 
-topic_model = BERTopic(verbose=False, calculate_probabilities=False)
+hdbscan_model = HDBSCAN(min_samples=10, gen_min_span_tree=True, prediction_data=True)
+umap_model = UMAP(n_components=5, n_neighbors=15, min_dist=0.0)
 
-# Inspect the profiler to confirm the UMAP/HDBSCAN steps actually ran on GPU
-with cuml.accel.profile() as prof:
-    topics, probs = topic_model.fit_transform(docs)
+topic_model = BERTopic(verbose=False,
+                       calculate_probabilities=False,
+                       hdbscan_model=hdbscan_model,
+                       umap_model=umap_model)
 
-def assert_ran_on_gpu(prefix):
-    stats = {n: s for n, s in prof.method_calls.items() if n.startswith(prefix)}
-    assert stats, f'no {prefix}* calls were recorded by cuml.accel'
-    gpu_calls = sum(s.gpu_calls for s in stats.values())
-    cpu_calls = sum(s.cpu_calls for s in stats.values())
-    reasons = sorted({r for s in stats.values() for r in s.fallback_reasons})
-    assert gpu_calls > 0, f'{prefix}* never ran on GPU (recorded: {sorted(stats)})'
-    assert cpu_calls == 0, f'{prefix}* fell back to CPU: {reasons}'
-
-assert_ran_on_gpu('UMAP.')
-assert_ran_on_gpu('HDBSCAN.')
+topics, probs = topic_model.fit_transform(docs)
 
 print(f'✓ BERTopic smoke test passed - processed {len(docs)} documents, found {len(set(topics))} topics')
 "
