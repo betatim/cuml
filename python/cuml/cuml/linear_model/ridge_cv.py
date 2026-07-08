@@ -20,13 +20,7 @@ from cuml.internals.outputs import reflect
 from cuml.internals.validation import check_inputs
 from cuml.linear_model.base import LinearPredictMixin
 from cuml.linear_model.ridge import Ridge
-
-# The GCV decomposition is computed in the input dtype (float32 stays float32).
-# scikit-learn always upcasts to float64 for numerical robustness, so float32
-# results may differ from sklearn by more than float64 results do. This dtype is
-# only used for the cheap scalar scoring in the explicit-``cv`` k-fold path,
-# where float64 keeps the R^2 computation stable at negligible cost.
-_SCORE_DTYPE = cp.float64
+from cuml.model_selection import KFold
 
 
 def _diag_dot(D, B):
@@ -39,15 +33,6 @@ def _diag_dot(D, B):
 def _decomp_diag(v_prime, Q):
     """Compute the diagonal of ``dot(Q, dot(diag(v_prime), Q.T))``."""
     return cp.sum(v_prime * Q**2, axis=1)
-
-
-def _check_gcv_mode(n_samples, n_features, gcv_mode):
-    """Resolve the ``gcv_mode`` parameter to a concrete strategy."""
-    if gcv_mode == "svd":
-        return "svd"
-    # "auto" and "eigen" both fall back to a Gram/covariance eigendecomposition,
-    # picking whichever matrix is smaller.
-    return "gram" if n_samples <= n_features else "cov"
 
 
 class RidgeCV(
@@ -126,11 +111,6 @@ class RidgeCV(
     best_score_ : float or array of shape (n_targets,)
         Score of the base estimator with the best alpha.
 
-    Notes
-    -----
-    For additional docs, see `scikit-learn's RidgeCV
-    <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html>`_.
-
     Examples
     --------
     >>> from cuml.datasets import make_regression
@@ -144,6 +124,8 @@ class RidgeCV(
     coef_ = CumlArrayDescriptor()
     intercept_ = CumlArrayDescriptor()
     cv_results_ = CumlArrayDescriptor()
+    alpha_ = CumlArrayDescriptor()
+    best_score_ = CumlArrayDescriptor()
 
     _cpu_class_path = "sklearn.linear_model.RidgeCV"
 
@@ -166,8 +148,10 @@ class RidgeCV(
             raise UnsupportedOnGPU("Custom `scoring` is not supported")
 
         if model.cv is not None:
-            # The k-fold path relies on matching scikit-learn's fold splitting
-            # and scoring exactly, which we don't attempt. Fall back to CPU.
+            # Only the GCV (cv=None) path is accelerated. cuML's k-fold path uses
+            # its own splitter/scoring and won't match sklearn's fold selection
+            # exactly, so under cuml.accel we fall back to CPU to preserve
+            # sklearn-identical results.
             raise UnsupportedOnGPU("`cv != None` is not supported")
 
         return {
@@ -195,8 +179,8 @@ class RidgeCV(
         out = {
             "coef_": to_gpu(model.coef_),
             "intercept_": to_gpu(model.intercept_),
-            "alpha_": model.alpha_,
-            "best_score_": model.best_score_,
+            "alpha_": to_gpu(model.alpha_),
+            "best_score_": to_gpu(model.best_score_),
             **super()._attrs_from_cpu(model),
         }
         if self.store_cv_results and hasattr(model, "cv_results_"):
@@ -207,8 +191,8 @@ class RidgeCV(
         out = {
             "coef_": to_cpu(self.coef_),
             "intercept_": to_cpu(self.intercept_),
-            "alpha_": self.alpha_,
-            "best_score_": self.best_score_,
+            "alpha_": to_cpu(self.alpha_),
+            "best_score_": to_cpu(self.best_score_),
             **super()._attrs_to_cpu(model),
         }
         if self.store_cv_results and hasattr(self, "cv_results_"):
@@ -244,7 +228,7 @@ class RidgeCV(
 
     # ------------------------------------------------------------------
     # GCV decomposition/solve helpers (dense-only ports of sklearn's
-    # ``_RidgeGCV``). All computation happens in float64.
+    # ``_RidgeGCV``). Computation happens in the input dtype.
     # ------------------------------------------------------------------
     def _solve_eigen_gram(
         self, alpha, y, sqrt_sw, eigvals, Q, QT_y, QT_sqrt_sw, XT
@@ -310,10 +294,12 @@ class RidgeCV(
         coef = V @ _diag_dot(singvals / (singvals**2 + alpha), UT_y)
         return looe, coef
 
-    def _fit_gcv(self, X, y, sample_weight, input_dtype):
+    def _fit_gcv(self, X, y, sample_weight):
         """Fit via Generalized (leave-one-out) cross-validation."""
         n_samples, n_features = X.shape
-        # Compute in the input dtype (float32 stays float32).
+        # Compute in the input dtype (float32 stays float32). scikit-learn
+        # always upcasts to float64 for numerical robustness, so float32 results
+        # may differ from sklearn by more than float64 results do.
         work = X.dtype
 
         alphas = np.asarray(self.alphas, dtype=np.float64)
@@ -356,9 +342,13 @@ class RidgeCV(
         else:
             sqrt_sw = cp.ones(n_samples, dtype=work)
 
-        gcv_mode = _check_gcv_mode(
-            n_samples, n_features, self.gcv_mode or "auto"
-        )
+        # "auto"/"eigen" pick the smaller of the Gram (X X') or covariance
+        # (X' X) eigendecomposition; "svd" decomposes X directly.
+        if (self.gcv_mode or "auto") == "svd":
+            gcv_mode = "svd"
+        else:
+            gcv_mode = "gram" if n_samples <= n_features else "cov"
+
         if gcv_mode == "gram":
             K = X @ X.T
             eigvals, Q = cp.linalg.eigh(K)
@@ -424,23 +414,16 @@ class RidgeCV(
         else:
             intercept = 0.0
 
-        # Cast fitted attributes back to the input dtype (like sklearn).
-        self.coef_ = CumlArray(coef.astype(input_dtype))
-        if cp.isscalar(intercept) or getattr(intercept, "ndim", 1) == 0:
+        self.coef_ = CumlArray(coef)
+        if cp.isscalar(intercept) or intercept.ndim == 0:
             self.intercept_ = float(intercept)
         else:
-            self.intercept_ = CumlArray(
-                cp.asarray(intercept, dtype=input_dtype)
-            )
-        # `alpha_`/`best_score_` are small metadata; keep them on host to match
-        # scikit-learn (a float, or a numpy array when alpha_per_target=True).
+            self.intercept_ = CumlArray(intercept)
+        # A single float when selecting one alpha, or a per-target array when
+        # `alpha_per_target=True`.
         if per_target:
-            self.alpha_ = cp.asnumpy(cp.asarray(best_alpha)).astype(
-                input_dtype
-            )
-            self.best_score_ = cp.asnumpy(cp.asarray(best_score)).astype(
-                input_dtype
-            )
+            self.alpha_ = CumlArray(best_alpha)
+            self.best_score_ = CumlArray(best_score)
         else:
             self.alpha_ = float(best_alpha)
             self.best_score_ = float(best_score)
@@ -450,13 +433,10 @@ class RidgeCV(
                 shape = (n_samples, n_alphas)
             else:
                 shape = (n_samples, n_y, n_alphas)
-            self.cv_results_ = CumlArray(
-                cv_results.reshape(shape).astype(input_dtype)
-            )
+            self.cv_results_ = CumlArray(cv_results.reshape(shape))
 
-    def _fit_cv(self, X, y, sample_weight, input_dtype):
+    def _fit_cv(self, X, y, sample_weight):
         """Fit via an explicit k-fold search over :class:`~cuml.Ridge`."""
-        from cuml.model_selection import KFold
 
         if self.store_cv_results:
             raise ValueError(
@@ -481,8 +461,11 @@ class RidgeCV(
         else:
             splits = list(self.cv)
 
-        mean_scores = cp.empty(len(alphas), dtype=_SCORE_DTYPE)
-        for i, alpha in enumerate(alphas):
+        # Mean cross-validation score per alpha. With scoring=None, sklearn's
+        # RidgeCV scores each fold with the estimator's default (uniform-average
+        # R^2), which is exactly what `cuml.Ridge.score` computes.
+        mean_scores = []
+        for alpha in alphas:
             fold_scores = []
             for train, test in splits:
                 train = cp.asarray(train)
@@ -492,17 +475,15 @@ class RidgeCV(
                     fit_intercept=self.fit_intercept,
                     output_type="cupy",
                 )
-                if sample_weight is None:
-                    model.fit(X[train], y[train])
-                else:
-                    model.fit(
-                        X[train], y[train], sample_weight=sample_weight[train]
-                    )
-                y_pred = model.predict(X[test])
-                fold_scores.append(_r2_score(y[test], y_pred))
-            mean_scores[i] = sum(fold_scores) / len(fold_scores)
+                sw_train = (
+                    None if sample_weight is None else sample_weight[train]
+                )
+                model.fit(X[train], y[train], sample_weight=sw_train)
+                # Unweighted score to match scikit-learn's behaviour
+                fold_scores.append(model.score(X[test], y[test]))
+            mean_scores.append(sum(fold_scores) / len(fold_scores))
 
-        best_idx = int(cp.argmax(mean_scores))
+        best_idx = int(np.argmax(mean_scores))
         best_alpha = float(alphas[best_idx])
 
         model = Ridge(
@@ -510,21 +491,14 @@ class RidgeCV(
             fit_intercept=self.fit_intercept,
             output_type="cupy",
         )
-        if sample_weight is None:
-            model.fit(X, y)
-        else:
-            model.fit(X, y, sample_weight=sample_weight)
+        model.fit(X, y, sample_weight=sample_weight)
 
-        self.coef_ = CumlArray(cp.asarray(model.coef_, dtype=input_dtype))
+        self.coef_ = model.coef_
         intercept = model.intercept_
-        if isinstance(intercept, CumlArray):
-            intercept = intercept.to_output("cupy")
-        if cp.isscalar(intercept) or getattr(intercept, "ndim", 1) == 0:
+        if cp.isscalar(intercept) or intercept.ndim == 0:
             self.intercept_ = float(intercept)
         else:
-            self.intercept_ = CumlArray(
-                cp.asarray(intercept, dtype=input_dtype)
-            )
+            self.intercept_ = intercept
         self.alpha_ = best_alpha
         self.best_score_ = float(mean_scores[best_idx])
 
@@ -548,27 +522,9 @@ class RidgeCV(
             ensure_min_samples=2,
             reset=True,
         )
-        input_dtype = X.dtype
-
-        # Keep the input dtype (float32 stays float32) rather than upcasting.
-        X = cp.asarray(X)
-        y = cp.asarray(y)
-        if sample_weight is not None:
-            sample_weight = cp.asarray(sample_weight)
-
         if self.cv is None:
-            self._fit_gcv(X, y, sample_weight, input_dtype)
+            self._fit_gcv(X, y, sample_weight)
         else:
-            self._fit_cv(X, y, sample_weight, input_dtype)
+            self._fit_cv(X, y, sample_weight)
 
         return self
-
-
-def _r2_score(y_true, y_pred):
-    """Uniform-average :math:`R^2` matching sklearn's default scorer."""
-    y_true = cp.asarray(y_true, dtype=_SCORE_DTYPE)
-    y_pred = cp.asarray(y_pred, dtype=_SCORE_DTYPE)
-    ss_res = ((y_true - y_pred) ** 2).sum(axis=0)
-    ss_tot = ((y_true - y_true.mean(axis=0)) ** 2).sum(axis=0)
-    r2 = 1.0 - ss_res / ss_tot
-    return float(cp.mean(r2))
