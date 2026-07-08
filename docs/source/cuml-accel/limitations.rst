@@ -301,6 +301,15 @@ Ridge
 
 - If ``positive=True`` or ``solver="lbfgs"``.
 
+RidgeCV
+^^^^^^^
+
+``RidgeCV`` will fall back to CPU in the following cases:
+
+- If ``cv`` is not ``None`` (only the default Leave-One-Out/GCV path is
+  accelerated on GPU).
+- If a custom ``scoring`` is provided.
+
 Lasso
 ^^^^^
 

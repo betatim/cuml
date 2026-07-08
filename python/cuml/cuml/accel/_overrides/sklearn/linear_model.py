@@ -19,6 +19,7 @@ __all__ = (
     "LogisticRegression",
     "ElasticNet",
     "Ridge",
+    "RidgeCV",
     "Lasso",
 )
 
@@ -64,6 +65,15 @@ class Ridge(ProxyBase):
                     )
 
         return self
+
+
+class RidgeCV(ProxyBase):
+    _gpu_class = cuml.linear_model.RidgeCV
+
+    def _gpu_fit(self, X, y, sample_weight=None, **params):
+        # `**params` is only used by sklearn for metadata routing, which we
+        # don't support; it's absorbed here to match sklearn's signature.
+        return self._gpu.fit(X, y, sample_weight=sample_weight)
 
 
 class _ElasticNetMixin:
