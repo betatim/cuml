@@ -37,11 +37,16 @@ def test_ridge_cv_gcv_runs_on_gpu(regression_data, fit_intercept):
     assert r2_score(y, y_pred) > 0.5
 
 
-def test_ridge_cv_selects_reasonable_alpha(regression_data):
+def test_ridge_cv_selects_best_alpha(regression_data):
     X, y = regression_data
     model = RidgeCV(alphas=ALPHAS).fit(X, y)
     assert model._gpu is not None
-    assert model.alpha_ in ALPHAS
+
+    # The grid fit should pick the alpha that maximizes the CV score, i.e. the
+    # same one we'd get by scoring each alpha on its own.
+    scores = {a: RidgeCV(alphas=[a]).fit(X, y).best_score_ for a in ALPHAS}
+    assert model.alpha_ == max(scores, key=scores.get)
+    assert model.best_score_ == pytest.approx(scores[model.alpha_])
 
 
 def test_ridge_cv_explicit_cv_falls_back_to_cpu(regression_data):
