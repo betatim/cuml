@@ -28,6 +28,7 @@ from cuml.linear_model import (
     MBSGDClassifier,
     MBSGDRegressor,
     Ridge,
+    RidgeCV,
 )
 from cuml.manifold import TSNE, UMAP, SpectralEmbedding
 from cuml.multiclass import OneVsOneClassifier, OneVsRestClassifier
@@ -106,6 +107,7 @@ ESTIMATORS = [
     LedoitWolf(),
     Lars(),
     Ridge(),
+    RidgeCV(),
     ElasticNet(),
     Lasso(),
     LinearRegression(),
