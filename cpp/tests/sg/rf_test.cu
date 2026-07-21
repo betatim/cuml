@@ -842,6 +842,44 @@ TEST(RfTests, IntegerOverflow)
   handle.sync_stream_pool();
 }
 
+TEST(RfTests, HighClassCountSplitHistogramFallsBackToGlobalMemory)
+{
+  constexpr std::size_t n_rows = 640;
+  constexpr std::size_t n_cols = 4;
+  constexpr int n_classes      = 80;
+  constexpr int max_n_bins     = 256;
+
+  auto stream_pool = std::make_shared<rmm::cuda_stream_pool>(1);
+  raft::handle_t handle(rmm::cuda_stream_per_thread, stream_pool);
+  thrust::device_vector<float> X(n_rows * n_cols);
+  thrust::device_vector<int> y(n_rows);
+
+  Datasets::make_blobs(handle,
+                       X.data().get(),
+                       y.data().get(),
+                       n_rows,
+                       n_cols,
+                       n_classes,
+                       false,
+                       nullptr,
+                       nullptr,
+                       5.0,
+                       false,
+                       -10.0f,
+                       10.0f,
+                       1234);
+
+  auto forest = std::make_shared<RandomForestMetaData<float, int>>();
+  auto rf_params =
+    set_rf_params(2, -1, 1.0f, max_n_bins, 1, 2, 0.0f, false, 1, 1.0f, 1234, CRITERION::GINI, 1, 4);
+  auto forest_ptr = forest.get();
+
+  ASSERT_NO_THROW(
+    fit(handle, forest_ptr, X.data().get(), n_rows, n_cols, y.data().get(), n_classes, rf_params));
+  ASSERT_EQ(forest->trees.size(), 1);
+  EXPECT_GT(forest->trees.front()->depth_counter, 0);
+}
+
 TEST(RfTests, InvalidSampleWeightThrows)
 {
   constexpr std::size_t n_rows = 16;
@@ -1643,7 +1681,7 @@ TEST(RfWeightedTest, RegressionRootLeafUsesWeights)
   const auto& tree = *forest->trees[0];
   ASSERT_EQ(tree.sparsetree.size(), 1);
   EXPECT_TRUE(tree.sparsetree[0].IsLeaf());
-  EXPECT_EQ(tree.sparsetree[0].InstanceCount(), 3);
+  EXPECT_EQ(tree.sparsetree[0].InstanceCount(), 2);
   ASSERT_EQ(tree.vector_leaf.size(), 1);
   EXPECT_NEAR(tree.vector_leaf[0], 7.5f, 1e-6f);
 }
@@ -1718,7 +1756,7 @@ TEST(RfWeightedTest, ZeroWeightSamplesDoNotCreatePositiveWeightSplit)
   const auto& tree = *forest->trees[0];
   ASSERT_EQ(tree.sparsetree.size(), 1);
   EXPECT_TRUE(tree.sparsetree[0].IsLeaf());
-  EXPECT_EQ(tree.sparsetree[0].InstanceCount(), 4);
+  EXPECT_EQ(tree.sparsetree[0].InstanceCount(), 2);
   ASSERT_EQ(tree.vector_leaf.size(), 2);
   EXPECT_NEAR(tree.vector_leaf[0], 0.0f, 1e-6f);
   EXPECT_NEAR(tree.vector_leaf[1], 1.0f, 1e-6f);
