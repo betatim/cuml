@@ -18,7 +18,7 @@ include(rapids-find)
 rapids_cuda_init_architectures(CUML)
 
 include("${rapids-cmake-dir}/cmake/check_conda_env.cmake")
-rapids_cmake_check_conda_env(REBUILD_INSTRUCTION "./build.sh clean")
+rapids_cmake_check_conda_env()
 
 project(
   CUML
