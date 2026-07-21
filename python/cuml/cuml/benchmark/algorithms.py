@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 import functools
@@ -57,6 +57,7 @@ except ImportError:
 cuml = None
 cuml_metrics = None
 treelite = None
+
 
 # GPU-specific helper functions (only available when GPU libs present)
 _build_cpu_skl_classifier = None
@@ -939,7 +940,7 @@ def all_algorithms():
                 HDBSCAN,
                 cuml_HDBSCAN,
                 shared_args={},
-                cpu_args={},
+                cpu_args={"core_dist_n_jobs": -1},
                 name="HDBSCAN",
                 accepts_labels=False,
             )
