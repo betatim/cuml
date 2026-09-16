@@ -654,6 +654,22 @@ def test_estimators_are_cached_until_refit(blobs_data):
     assert len(model.estimators_) == 7
 
 
+def test_reconstruction_uses_the_fitted_depth(blobs_data):
+    """Changing max_depth after fit must not rewrite fitted metadata."""
+    model = cuIsolationForest(
+        n_estimators=5, max_samples=64, random_state=0
+    ).fit(blobs_data)
+    fitted_depth = model.estimator_.max_depth
+
+    model.set_params(max_depth=2)
+
+    assert [est.max_depth for est in model.estimators_] == [fitted_depth] * 5
+    converted = model.as_sklearn()
+    assert [est.max_depth for est in converted.estimators_] == [
+        fitted_depth
+    ] * 5
+
+
 def test_estimators_cache_is_not_pickled(blobs_data):
     """The reconstruction is derived state and stays out of the model file."""
     model = cuIsolationForest(n_estimators=5, random_state=0).fit(blobs_data)

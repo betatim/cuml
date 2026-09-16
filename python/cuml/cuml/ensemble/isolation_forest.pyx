@@ -426,7 +426,8 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         """
         exported = treelite.sklearn.export_model(self.as_treelite())
         n_samples = int(self.max_samples_)
-        max_depth = _effective_max_depth(self.max_depth, n_samples)
+        # `estimator_` holds the depth from when `fit` was called
+        max_depth = self.estimator_.max_depth
         if any(
             len(features) != self._max_features
             for features in self.estimators_features_
@@ -457,10 +458,12 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         """Converts fitted state to sklearn attributes.
 
         ``_build_estimators`` rebuilds the trees for every conversion and never
-        hands out the cached native ``estimators_``, so mutations of the native
-        inspection attributes cannot leak into converted models. ``_seeds`` is
-        not transferable because cuML does not record per-tree sample indices,
-        so ``estimators_samples_`` remains unavailable.
+        hands out the cached native ``estimators_``, so edits to the
+        reconstructed trees cannot leak into converted models. Stored fitted
+        state (``estimator_``, ``estimators_features_``, ``offset_``) is copied.
+        ``_seeds`` is not transferable because cuML does not
+        record per-tree sample indices, so ``estimators_samples_`` remains
+        unavailable.
         """
         from sklearn.ensemble._iforest import _average_path_length
 
@@ -470,7 +473,7 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         return {
             "estimator_": ExtraTreeRegressor(
                 max_features=1,
-                max_depth=_effective_max_depth(self.max_depth, n_samples),
+                max_depth=self.estimator_.max_depth,
                 random_state=self.random_state,
             ),
             "estimators_": estimators,
