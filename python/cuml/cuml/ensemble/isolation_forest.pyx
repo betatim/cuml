@@ -18,6 +18,7 @@ import cupy as cp
 import numpy as np
 import nvforest
 import treelite
+from sklearn.tree import ExtraTreeRegressor
 
 from cuml.internals.base import Base, get_handle
 from cuml.internals.interop import InteropMixin, UnsupportedOnGPU
@@ -153,6 +154,18 @@ def _recover_node_sample_counts(tree, n_samples):
     return counts
 
 
+def _effective_max_depth(max_depth, max_samples):
+    """The depth limit the fitted trees were built with.
+
+    Mirrors the C++ default ``max(ceil(log2(n_sampled_rows)), 1)``, which
+    agrees with sklearn's ``ceil(log2(max(max_samples, 2)))`` for every
+    ``max_samples >= 1``.
+    """
+    if max_depth is None:
+        return int(np.ceil(np.log2(max(max_samples, 2))))
+    return int(max_depth)
+
+
 def _isolation_tree_to_sklearn(
     exported_tree, feature_indices, n_samples, max_depth
 ):
@@ -162,7 +175,6 @@ def _isolation_tree_to_sklearn(
     """
     import sklearn
     from packaging.version import Version
-    from sklearn.tree import ExtraTreeRegressor
 
     counts = _recover_node_sample_counts(exported_tree.tree_, n_samples)
     state = exported_tree.tree_.__getstate__()
@@ -286,6 +298,18 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
 
     Attributes
     ----------
+    estimator_ : :class:`~sklearn.tree.ExtraTreeRegressor` instance
+        The child estimator template used to create the collection of fitted
+        sub-estimators.
+    estimators_ : list of ExtraTreeRegressor instances
+        The collection of fitted sub-estimators. They are reconstructed from
+        the fitted forest on first access and cached afterwards, so the first
+        read of a large forest takes a moment.
+    estimators_features_ : list of ndarray
+        The subset of drawn features for each base estimator. Following
+        scikit-learn's bagging convention, the split features of
+        ``estimators_[i]`` index into ``estimators_features_[i]`` rather than
+        into the columns of ``X``.
     n_features_in_ : int
         Number of features seen during fit.
     offset_ : float
@@ -316,8 +340,12 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
     Fitted models can be exported to Treelite with ``as_treelite()`` and loaded
     into nvForest with ``as_nvforest()``. ``as_sklearn()`` converts a fitted
     model into an equivalent ``sklearn.ensemble.IsolationForest``;
-    ``estimators_samples_`` is not available on the converted model because
-    cuML does not record per-tree sample indices.
+    ``estimators_samples_`` is available on neither the native nor the
+    converted model because cuML does not record per-tree sample indices.
+
+    Scoring runs from the GPU model rather than from the trees above, so
+    editing ``estimator_``, ``estimators_`` or ``estimators_features_`` does
+    not change ``predict``, ``decision_function`` or ``score_samples``.
     """
 
     _cpu_class_path = "sklearn.ensemble.IsolationForest"
@@ -344,7 +372,6 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         self.bootstrap = bootstrap
         self.random_state = random_state
         self.contamination = contamination
-        self._feature_indices = None
 
     @classmethod
     def _get_param_names(cls):
@@ -390,52 +417,65 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
             "Conversion of a fitted sklearn IsolationForest is not supported"
         )
 
-    def _attrs_to_cpu(self, model):
-        """Converts fitted state to sklearn attributes.
+    def _build_estimators(self):
+        """Rebuilds the fitted forest as a list of sklearn estimators.
 
-        A fresh tree snapshot is built for every conversion so mutations of
-        native inspection attributes never leak into converted models.
-        ``_seeds`` is not transferable because cuML does not record per-tree
-        sample indices, so ``estimators_samples_`` remains unavailable.
+        Returns freshly built trees on every call, never the cached
+        ``estimators_``, so native inspection and converted models stay
+        independent of each other.
         """
-        from sklearn.ensemble._iforest import _average_path_length
-        from sklearn.tree import ExtraTreeRegressor
-
-        check_is_fitted(self)
-        tl_model = treelite.Model.deserialize_bytes(self._treelite_model_bytes)
-        exported = treelite.sklearn.export_model(tl_model)
+        exported = treelite.sklearn.export_model(self.as_treelite())
         n_samples = int(self.max_samples_)
-        if self.max_depth is None:
-            max_depth = int(np.ceil(np.log2(max(n_samples, 2))))
-        else:
-            max_depth = int(self.max_depth)
-
-        feature_indices = np.asarray(self._feature_indices, dtype=np.int64)
-        if (
-            feature_indices.ndim != 2
-            or feature_indices.shape[0] != len(exported.estimators_)
-            or feature_indices.shape[1] != self._max_features
+        max_depth = _effective_max_depth(self.max_depth, n_samples)
+        if any(
+            len(features) != self._max_features
+            for features in self.estimators_features_
         ):
             raise ValueError(
                 "Stored feature indices do not match the fitted forest shape."
             )
-        estimators = [
-            _isolation_tree_to_sklearn(
-                tree, features, n_samples, max_depth
-            )
+        return [
+            _isolation_tree_to_sklearn(tree, features, n_samples, max_depth)
             for tree, features in zip(
-                exported.estimators_, feature_indices, strict=True
+                exported.estimators_, self.estimators_features_, strict=True
             )
         ]
+
+    @property
+    def estimators_(self):
+        """The fitted isolation trees, rebuilt from the fitted forest."""
+        if (estimators := getattr(self, "_estimators", None)) is None:
+            if not hasattr(self, "_treelite_model_bytes"):
+                raise AttributeError(
+                    f"{type(self).__name__!r} object has no attribute "
+                    "'estimators_'"
+                )
+            estimators = self._estimators = self._build_estimators()
+        return estimators
+
+    def _attrs_to_cpu(self, model):
+        """Converts fitted state to sklearn attributes.
+
+        ``_build_estimators`` rebuilds the trees for every conversion and never
+        hands out the cached native ``estimators_``, so mutations of the native
+        inspection attributes cannot leak into converted models. ``_seeds`` is
+        not transferable because cuML does not record per-tree sample indices,
+        so ``estimators_samples_`` remains unavailable.
+        """
+        from sklearn.ensemble._iforest import _average_path_length
+
+        check_is_fitted(self)
+        n_samples = int(self.max_samples_)
+        estimators = self._build_estimators()
         return {
             "estimator_": ExtraTreeRegressor(
                 max_features=1,
-                max_depth=max_depth,
+                max_depth=_effective_max_depth(self.max_depth, n_samples),
                 random_state=self.random_state,
             ),
             "estimators_": estimators,
             "estimators_features_": [
-                features.copy() for features in feature_indices
+                features.copy() for features in self.estimators_features_
             ],
             "max_samples_": n_samples,
             "offset_": float(self.offset_),
@@ -458,6 +498,9 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         # nvForest model isn't currently pickleable. It's rebuilt on demand from
         # `_treelite_model_bytes`, which is the fitted model.
         state.pop("_nvforest_model", None)
+        # The reconstructed trees can be rederived later, and
+        # pickling them roughly doubles the size of a fitted model.
+        state.pop("_estimators", None)
         return state
 
     def __setstate__(self, state):
@@ -482,6 +525,10 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         self : IsolationForest
             Fitted estimator.
         """
+        # Reset up front, never roll back: the reconstructed trees must not
+        # outlive the model they were built from.
+        self._estimators = None
+
         # Convert input to a column-major device array for fit.
         X_m = check_inputs(
             self,
@@ -672,7 +719,13 @@ class IsolationForest(InteropMixin, CMajorInputTagMixin, Base):
         self._treelite_model_bytes = <bytes>(tl_bytes[:tl_bytes_len])
         self._normalization_constant = c_normalization
         self._max_features = actual_max_features
-        self._feature_indices = feature_indices
+
+        self.estimators_features_ = list(feature_indices.astype(np.int64))
+        self.estimator_ = ExtraTreeRegressor(
+            max_features=1,
+            max_depth=_effective_max_depth(self.max_depth, actual_max_samples),
+            random_state=self.random_state,
+        )
         # Load the inference model here rather than on first use, so that
         # `predict` and friends don't mutate the estimator. The lazy path in
         # `_get_inference_nvforest_model` then only covers unpickled models.

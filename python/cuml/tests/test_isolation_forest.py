@@ -409,7 +409,8 @@ def test_as_sklearn_populates_fitted_attributes(blobs_data):
     assert len(sk_model.estimators_) == 10
     assert len(sk_model.estimators_features_) == 10
     np.testing.assert_array_equal(
-        np.stack(sk_model.estimators_features_), cu_model._feature_indices
+        np.stack(sk_model.estimators_features_),
+        np.stack(cu_model.estimators_features_),
     )
     for features, tree in zip(
         sk_model.estimators_features_, sk_model.estimators_, strict=True
@@ -443,11 +444,13 @@ def test_feature_indices_survive_native_pickle(blobs_data):
     restored = pickle.loads(pickle.dumps(model))
 
     np.testing.assert_array_equal(
-        restored._feature_indices, model._feature_indices
+        np.stack(restored.estimators_features_),
+        np.stack(model.estimators_features_),
     )
     converted = restored.as_sklearn()
     np.testing.assert_array_equal(
-        np.stack(converted.estimators_features_), model._feature_indices
+        np.stack(converted.estimators_features_),
+        np.stack(model.estimators_features_),
     )
     np.testing.assert_allclose(
         converted.score_samples(blobs_data),
@@ -545,6 +548,144 @@ def test_invert_average_path_length_fails_loudly():
     midpoint = float(_average_path_length(np.asarray([50000, 50001])).mean())
     with pytest.raises(ValueError, match="more than one"):
         _invert_average_path_length(midpoint)
+
+
+# =============================================================================
+# Native fitted attributes
+# =============================================================================
+
+
+def _score_samples_from_attributes(model, X):
+    """Recompute the anomaly score from the native fitted attributes.
+
+    Mirrors ``sklearn.ensemble.IsolationForest._compute_score_samples`` using
+    nothing but ``estimators_``, ``estimators_features_`` and ``max_samples_``.
+    """
+    from sklearn.ensemble._iforest import _average_path_length
+
+    depths = np.zeros(X.shape[0], dtype=np.float64)
+    for tree, features in zip(
+        model.estimators_, model.estimators_features_, strict=True
+    ):
+        leaves = tree.apply(X[:, features])
+        depths += (
+            tree.tree_.compute_node_depths()[leaves]
+            + _average_path_length(tree.tree_.n_node_samples[leaves])
+            - 1.0
+        )
+    denominator = len(model.estimators_) * _average_path_length(
+        np.asarray([model.max_samples_])
+    )
+    return -np.exp2(-depths / denominator)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"n_estimators": 20, "max_samples": 128},
+        {"n_estimators": 20, "max_samples": 128, "max_features": 0.5},
+    ],
+)
+def test_native_attributes_reproduce_score_samples(anomaly_data, params):
+    """The exposed trees describe the model cuML actually scores with."""
+    model = cuIsolationForest(random_state=3, **params).fit(anomaly_data)
+
+    np.testing.assert_allclose(
+        _score_samples_from_attributes(model, anomaly_data),
+        np.asarray(model.score_samples(anomaly_data), dtype=np.float64),
+        rtol=0,
+        atol=1e-5,
+    )
+
+
+def test_native_attributes_match_as_sklearn(blobs_data):
+    """The native attributes are the ones conversion produces."""
+    model = cuIsolationForest(
+        n_estimators=10, max_samples=64, max_features=0.5, random_state=0
+    ).fit(blobs_data)
+    converted = model.as_sklearn()
+
+    assert model.estimator_.get_params() == converted.estimator_.get_params()
+    np.testing.assert_array_equal(
+        np.stack(model.estimators_features_),
+        np.stack(converted.estimators_features_),
+    )
+    assert len(model.estimators_) == 10
+    for native, other in zip(
+        model.estimators_, converted.estimators_, strict=True
+    ):
+        assert native is not other
+        for attribute in (
+            "children_left",
+            "children_right",
+            "feature",
+            "threshold",
+            "n_node_samples",
+            "value",
+        ):
+            np.testing.assert_array_equal(
+                getattr(native.tree_, attribute),
+                getattr(other.tree_, attribute),
+                err_msg=attribute,
+            )
+
+
+@pytest.mark.parametrize(
+    "attribute", ["estimator_", "estimators_", "estimators_features_"]
+)
+def test_fitted_attributes_unavailable_before_fit(attribute):
+    """Unfitted access matches sklearn: a plain AttributeError."""
+    model = cuIsolationForest()
+
+    assert not hasattr(model, attribute)
+    with pytest.raises(AttributeError, match=attribute):
+        getattr(model, attribute)
+
+
+def test_estimators_are_cached_until_refit(blobs_data):
+    """Reconstruction happens once, and a refit invalidates it."""
+    model = cuIsolationForest(n_estimators=5, random_state=0).fit(blobs_data)
+
+    estimators = model.estimators_
+    assert model.estimators_ is estimators
+
+    model.set_params(n_estimators=7).fit(blobs_data)
+    assert model.estimators_ is not estimators
+    assert len(model.estimators_) == 7
+
+
+def test_estimators_cache_is_not_pickled(blobs_data):
+    """The reconstruction is derived state and stays out of the model file."""
+    model = cuIsolationForest(n_estimators=5, random_state=0).fit(blobs_data)
+    estimators = model.estimators_
+
+    assert "_estimators" not in model.__getstate__()
+
+    restored = pickle.loads(pickle.dumps(model))
+    assert len(restored.estimators_) == len(estimators)
+    np.testing.assert_array_equal(
+        np.stack(restored.estimators_features_),
+        np.stack(model.estimators_features_),
+    )
+    assert restored.estimator_.get_params() == model.estimator_.get_params()
+
+
+def test_native_tree_edits_stay_native(blobs_data):
+    """Edits to the reconstructed trees reach neither scoring nor conversion."""
+    model = cuIsolationForest(n_estimators=5, random_state=0).fit(blobs_data)
+    scores = np.asarray(model.score_samples(blobs_data), dtype=np.float64)
+    thresholds = model.estimators_[0].tree_.threshold.copy()
+
+    model.estimators_[0].tree_.threshold[:] = 0.0
+
+    np.testing.assert_array_equal(
+        model.as_sklearn().estimators_[0].tree_.threshold, thresholds
+    )
+    np.testing.assert_array_equal(
+        np.asarray(model.score_samples(blobs_data), dtype=np.float64), scores
+    )
+    # Nor is the edit silently reverted
+    assert np.all(model.estimators_[0].tree_.threshold == 0.0)
 
 
 def test_contamination_float_preserves_feature_names():
