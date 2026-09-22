@@ -2331,13 +2331,11 @@ class QuantileTransformer(
 
     Parameters
     ----------
-    n_quantiles : int, optional (default=1000 or n_samples)
+    n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        If n_quantiles is larger than the number of samples, n_quantiles is set
-        to the number of samples as a larger number of quantiles does not give
-        a better approximation of the cumulative distribution function
-        estimator.
+        With scikit-learn < 1.10 installed, n_quantiles is capped at the
+        number of samples; with scikit-learn >= 1.10 it is used as given.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
@@ -2369,7 +2367,9 @@ class QuantileTransformer(
     ----------
     n_quantiles_ : integer
         The actual number of quantiles used to discretize the cumulative
-        distribution function.
+        distribution function. Equal to `n_quantiles`, except with
+        scikit-learn < 1.10 installed where it is capped at the number of
+        samples seen during `fit`.
 
     quantiles_ : ndarray, shape (n_quantiles, n_features)
         The values corresponding the quantiles of reference.
@@ -2781,13 +2781,11 @@ def quantile_transform(X, *, axis=0, n_quantiles=1000,
         Axis used to compute the means and standard deviations along. If 0,
         transform each feature, otherwise (if 1) transform each sample.
 
-    n_quantiles : int, optional (default=1000 or n_samples)
+    n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        If n_quantiles is larger than the number of samples, n_quantiles is set
-        to the number of samples as a larger number of quantiles does not give
-        a better approximation of the cumulative distribution function
-        estimator.
+        With scikit-learn < 1.10 installed, n_quantiles is capped at the
+        number of samples; with scikit-learn >= 1.10 it is used as given.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
@@ -2798,10 +2796,11 @@ def quantile_transform(X, *, axis=0, n_quantiles=1000,
         matrix are discarded to compute the quantile statistics. If False,
         these entries are treated as zeros.
 
-    subsample : int, optional (default=1e5)
+    subsample : int or None, optional (default=100_000)
         Maximum number of samples used to estimate the quantiles for
         computational efficiency. Note that the subsampling procedure may
         differ for value-identical sparse and dense matrices.
+        Disable subsampling by setting `subsample=None`.
 
     random_state : int, RandomState instance or None, optional (default=None)
         Determines random number generation for subsampling and smoothing
