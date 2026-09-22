@@ -30,7 +30,9 @@ from itertools import combinations_with_replacement as combinations_w_r
 
 import cupy as np
 import numpy as cpu_np
+import sklearn
 from cupyx.scipy import sparse
+from packaging.version import Version
 from scipy import optimize, stats
 from scipy.special import boxcox
 from sklearn.base import OneToOneFeatureMixin, ClassNamePrefixFeaturesOutMixin
@@ -59,6 +61,14 @@ from ..utils.sparsefuncs import (
     min_max_axis,
 )
 from ..utils.validation import FLOAT_DTYPES, check_random_state
+
+SKLEARN_110 = Version(sklearn.__version__) >= Version("1.10.0.dev0")
+
+# sklearn >= 1.10 estimates quantiles with the averaged inverted CDF instead of
+# numpy's default linear interpolation (scikit-learn PR #32761)
+_NANPERCENTILE_KWARGS = (
+    {"method": "averaged_inverted_cdf"} if SKLEARN_110 else {}
+)
 
 BOUNDS_THRESHOLD = 1e-7
 
@@ -2338,10 +2348,11 @@ class QuantileTransformer(
         matrix are discarded to compute the quantile statistics. If False,
         these entries are treated as zeros.
 
-    subsample : int, optional (default=1e5)
+    subsample : int or None, optional (default=10_000)
         Maximum number of samples used to estimate the quantiles for
         computational efficiency. Note that the subsampling procedure may
         differ for value-identical sparse and dense matrices.
+        Disable subsampling by setting `subsample=None`.
 
     random_state : int, RandomState instance or None, optional (default=None)
         Determines random number generation for subsampling and smoothing
@@ -2396,7 +2407,7 @@ class QuantileTransformer(
     references_ = ReflectedAttr()
 
     def __init__(self, *, n_quantiles=1000, output_distribution='uniform',
-                 ignore_implicit_zeros=False, subsample=int(1e5),
+                 ignore_implicit_zeros=False, subsample=10_000,
                  random_state=None, copy=True):
         self.n_quantiles = n_quantiles
         self.output_distribution = output_distribution
@@ -2436,10 +2447,17 @@ class QuantileTransformer(
             # Take a subsample of `X`
             from sklearn.utils import resample
             X = resample(
-                X, replace=False, n_samples=self.subsample, random_state=random_state
+                X,
+                # sklearn >= 1.10 subsamples with replacement to preserve the
+                # distribution (scikit-learn PR #32761)
+                replace=SKLEARN_110,
+                n_samples=self.subsample,
+                random_state=random_state,
             )
 
-        self.quantiles_ = cpu_np.nanpercentile(X, references, axis=0)
+        self.quantiles_ = cpu_np.nanpercentile(
+            X, references, axis=0, **_NANPERCENTILE_KWARGS
+        )
         # Due to floating-point precision error in `np.nanpercentile`,
         # make sure that quantiles are monotonically increasing.
         # Upstream issue in numpy:
@@ -2462,7 +2480,8 @@ class QuantileTransformer(
         for feature_idx in range(n_features):
             column_nnz_data = X.data[X.indptr[feature_idx]:
                                      X.indptr[feature_idx + 1]]
-            if len(column_nnz_data) > self.subsample:
+            if (self.subsample is not None
+                    and len(column_nnz_data) > self.subsample):
                 column_data = np.zeros(shape=self.subsample, dtype=X.dtype)
                 column_subsample = (
                     self.subsample
@@ -2489,7 +2508,8 @@ class QuantileTransformer(
             else:
                 self.quantiles_.append(
                     cpu_np.nanpercentile(np.asnumpy(column_data),
-                                         np.asnumpy(references)))
+                                         np.asnumpy(references),
+                                         **_NANPERCENTILE_KWARGS))
         self.quantiles_ = cpu_np.transpose(np.asnumpy(self.quantiles_))
 
         # due to floating-point precision error in `np.nanpercentile`,
@@ -2519,26 +2539,31 @@ class QuantileTransformer(
                              "The number of quantiles must be at least one."
                              % self.n_quantiles)
 
-        if self.subsample <= 0:
-            raise ValueError("Invalid value for 'subsample': %d. "
-                             "The number of subsamples must be at least one."
-                             % self.subsample)
+        if self.subsample is not None:
+            if self.subsample <= 0:
+                raise ValueError("Invalid value for 'subsample': %d. "
+                                 "The number of subsamples must be at least "
+                                 "one." % self.subsample)
 
-        if self.n_quantiles > self.subsample:
-            raise ValueError("The number of quantiles cannot be greater than"
-                             " the number of samples used. Got {} quantiles"
-                             " and {} samples.".format(self.n_quantiles,
-                                                       self.subsample))
+            if self.n_quantiles > self.subsample:
+                raise ValueError("The number of quantiles cannot be greater"
+                                 " than the number of samples used. Got {}"
+                                 " quantiles and {} samples.".format(
+                                     self.n_quantiles, self.subsample))
 
         X = self._check_inputs(X, in_fit=True, copy=False)
         n_samples = X.shape[0]
 
-        if self.n_quantiles > n_samples:
-            warnings.warn("n_quantiles (%s) is greater than the total number "
-                          "of samples (%s). n_quantiles is set to "
-                          "n_samples."
-                          % (self.n_quantiles, n_samples))
-        self.n_quantiles_ = max(1, min(self.n_quantiles, n_samples))
+        if SKLEARN_110:
+            # sklearn >= 1.10 no longer clamps n_quantiles_ to n_samples
+            self.n_quantiles_ = self.n_quantiles
+        else:
+            if self.n_quantiles > n_samples:
+                warnings.warn("n_quantiles (%s) is greater than the total "
+                              "number of samples (%s). n_quantiles is set to "
+                              "n_samples."
+                              % (self.n_quantiles, n_samples))
+            self.n_quantiles_ = max(1, min(self.n_quantiles, n_samples))
 
         rng = check_random_state(self.random_state)
 
