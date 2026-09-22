@@ -2348,7 +2348,7 @@ class QuantileTransformer(
         matrix are discarded to compute the quantile statistics. If False,
         these entries are treated as zeros.
 
-    subsample : int or None, optional (default=10_000)
+    subsample : int or None, optional (default=100_000)
         Maximum number of samples used to estimate the quantiles for
         computational efficiency. Note that the subsampling procedure may
         differ for value-identical sparse and dense matrices.
@@ -2407,7 +2407,7 @@ class QuantileTransformer(
     references_ = ReflectedAttr()
 
     def __init__(self, *, n_quantiles=1000, output_distribution='uniform',
-                 ignore_implicit_zeros=False, subsample=10_000,
+                 ignore_implicit_zeros=False, subsample=100_000,
                  random_state=None, copy=True):
         self.n_quantiles = n_quantiles
         self.output_distribution = output_distribution
