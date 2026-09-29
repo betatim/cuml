@@ -30,9 +30,7 @@ from itertools import combinations_with_replacement as combinations_w_r
 
 import cupy as np
 import numpy as cpu_np
-import sklearn
 from cupyx.scipy import sparse
-from packaging.version import Version
 from scipy import optimize, stats
 from scipy.special import boxcox
 from sklearn.base import OneToOneFeatureMixin, ClassNamePrefixFeaturesOutMixin
@@ -61,14 +59,6 @@ from ..utils.sparsefuncs import (
     min_max_axis,
 )
 from ..utils.validation import FLOAT_DTYPES, check_random_state
-
-SKLEARN_110 = Version(sklearn.__version__) >= Version("1.10.0.dev0")
-
-# sklearn >= 1.10 estimates quantiles with the averaged inverted CDF instead of
-# numpy's default linear interpolation (scikit-learn PR #32761)
-_NANPERCENTILE_KWARGS = (
-    {"method": "averaged_inverted_cdf"} if SKLEARN_110 else {}
-)
 
 BOUNDS_THRESHOLD = 1e-7
 
@@ -2334,8 +2324,9 @@ class QuantileTransformer(
     n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        With scikit-learn < 1.10 installed, n_quantiles is capped at the
-        number of samples; with scikit-learn >= 1.10 it is used as given.
+
+        .. versionchanged:: 26.12
+            `n_quantiles` is no longer capped at the number of samples.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
@@ -2366,10 +2357,8 @@ class QuantileTransformer(
     Attributes
     ----------
     n_quantiles_ : integer
-        The actual number of quantiles used to discretize the cumulative
-        distribution function. Equal to `n_quantiles`, except with
-        scikit-learn < 1.10 installed where it is capped at the number of
-        samples seen during `fit`.
+        The number of quantiles used to discretize the cumulative
+        distribution function. Always equal to `n_quantiles`.
 
     quantiles_ : ndarray, shape (n_quantiles, n_features)
         The values corresponding the quantiles of reference.
@@ -2448,15 +2437,13 @@ class QuantileTransformer(
             from sklearn.utils import resample
             X = resample(
                 X,
-                # sklearn >= 1.10 subsamples with replacement to preserve the
-                # distribution (scikit-learn PR #32761)
-                replace=SKLEARN_110,
+                replace=True,
                 n_samples=self.subsample,
                 random_state=random_state,
             )
 
         self.quantiles_ = cpu_np.nanpercentile(
-            X, references, axis=0, **_NANPERCENTILE_KWARGS
+            X, references, axis=0, method="averaged_inverted_cdf"
         )
         # Due to floating-point precision error in `np.nanpercentile`,
         # make sure that quantiles are monotonically increasing.
@@ -2509,7 +2496,7 @@ class QuantileTransformer(
                 self.quantiles_.append(
                     cpu_np.nanpercentile(np.asnumpy(column_data),
                                          np.asnumpy(references),
-                                         **_NANPERCENTILE_KWARGS))
+                                         method="averaged_inverted_cdf"))
         self.quantiles_ = cpu_np.transpose(np.asnumpy(self.quantiles_))
 
         # due to floating-point precision error in `np.nanpercentile`,
@@ -2552,18 +2539,8 @@ class QuantileTransformer(
                                      self.n_quantiles, self.subsample))
 
         X = self._check_inputs(X, in_fit=True, copy=False)
-        n_samples = X.shape[0]
 
-        if SKLEARN_110:
-            # sklearn >= 1.10 no longer clamps n_quantiles_ to n_samples
-            self.n_quantiles_ = self.n_quantiles
-        else:
-            if self.n_quantiles > n_samples:
-                warnings.warn("n_quantiles (%s) is greater than the total "
-                              "number of samples (%s). n_quantiles is set to "
-                              "n_samples."
-                              % (self.n_quantiles, n_samples))
-            self.n_quantiles_ = max(1, min(self.n_quantiles, n_samples))
+        self.n_quantiles_ = self.n_quantiles
 
         rng = check_random_state(self.random_state)
 
@@ -2784,8 +2761,9 @@ def quantile_transform(X, *, axis=0, n_quantiles=1000,
     n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        With scikit-learn < 1.10 installed, n_quantiles is capped at the
-        number of samples; with scikit-learn >= 1.10 it is used as given.
+
+        .. versionchanged:: 26.12
+            `n_quantiles` is no longer capped at the number of samples.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
