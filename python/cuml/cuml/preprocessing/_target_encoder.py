@@ -532,8 +532,12 @@ class TargetEncoder(InteropMixin, Base):
         Uses a merge rather than comparing values so that a missing
         category matches the missing key in `encode_all`.
         """
+        # hardcode `nan_as_null=True` (cudf's default) so the behavior
+        # doesn't switch when cudf.pandas is active. A missing category has
+        # to be null to match the null key in `encode_all`.
         cats = cudf.DataFrame(
-            {col: categories, "pos": cp.arange(len(categories))}
+            {col: categories, "pos": cp.arange(len(categories))},
+            nan_as_null=True,
         )
         cats = cats.merge(encode_all[[col, "out"]], on=col, how="left")
         out = cats.sort_values("pos")["out"].fillna(float(self.mean))
@@ -756,11 +760,16 @@ class TargetEncoder(InteropMixin, Base):
         # This gives exact compatibility with no approximation
         encode_all = []
         for i, col in enumerate(x_cols):
+            # hardcode `nan_as_null=True` (cudf's default) so the
+            # behavior doesn't switch when cudf.pandas is active. Missing
+            # categories have to be null to match the input data, which
+            # `check_cudf` normalizes the same way.
             encode_all_i = cudf.DataFrame(
                 {
                     col: model.categories_[i],
                     "out": model.encodings_[i],
-                }
+                },
+                nan_as_null=True,
             )
             encode_all.append(encode_all_i)
 
