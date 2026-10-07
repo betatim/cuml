@@ -5,6 +5,7 @@
 import cudf
 import cupy as cp
 import numpy as np
+import pandas as pd
 import pytest
 import scipy
 import scipy.sparse
@@ -1130,15 +1131,27 @@ def test_target_encoder(random_state):
     assert array_equal(original_output, roundtrip_output)
 
 
-@pytest.mark.parametrize("missing", [None, np.nan])
-def test_target_encoder_missing_category(missing):
+def _make_missing_X(values, kind):
+    """Build a single-column input where ``None`` in ``values`` is a missing
+    value in the representation given by ``kind``."""
+    if kind == "float-nan":
+        codes = {"a": 0.0, "b": 1.0, "c": 2.0, None: np.nan}
+        return np.array([codes[v] for v in values])[:, None]
+    elif kind == "pandas-str":
+        # pandas 3 infers a str column, which stores missing values as NaN
+        return pd.DataFrame({"c": values})
+    missing = None if kind == "object-none" else np.nan
+    values = [missing if v is None else v for v in values]
+    return np.array(values, dtype=object)[:, None]
+
+
+@pytest.mark.parametrize(
+    "kind", ["object-none", "object-nan", "pandas-str", "float-nan"]
+)
+def test_target_encoder_missing_category(kind):
     # A missing value seen during fit is a category of its own (gh-8697)
-    if missing is None:
-        X = np.array(["a", "b", None, "b", None, "a"], dtype=object)[:, None]
-        X_test = np.array(["b", None, "c"], dtype=object)[:, None]
-    else:
-        X = np.array([0.0, 1.0, np.nan, 1.0, np.nan, 0.0])[:, None]
-        X_test = np.array([1.0, np.nan, 2.0])[:, None]
+    X = _make_missing_X(["a", "b", None, "b", None, "a"], kind)
+    X_test = _make_missing_X(["b", None, "c"], kind)
     y = np.array([1.5, 2.5, 3.5, 4.5, 7.5, 7.5])
     expected = np.array([3.5, 5.5, 4.5])[:, None]
 
@@ -1156,6 +1169,28 @@ def test_target_encoder_missing_category(missing):
     assert_allclose(sk_model.transform(X_test), expected)
     assert_allclose(cu_model2.transform(X_test), expected)
     assert_allclose(sk_model2.transform(X_test), expected)
+
+    # sklearn treats `None` and `NaN` as different categories, cuML has only
+    # one missing category. The exported model has to accept either. This is
+    # because in cuml we only use None
+    if kind in ("object-none", "object-nan"):
+        for test_kind in ("object-none", "object-nan"):
+            X_test = _make_missing_X(["b", None, "c"], test_kind)
+            assert_allclose(sk_model2.transform(X_test), expected)
+
+
+def test_target_encoder_from_sklearn_none_and_nan():
+    # sklearn keeps `None` and `NaN` as two categories with their own
+    # encodings, cuML can't represent that. This is pretty rare so
+    # for now we raise UnsupportedOnGPU
+    X = np.array(["a", "b", None, "a", "b", np.nan], dtype=object)[:, None]
+    y = np.array([1.5, 2.5, 3.5, 4.5, 7.5, 7.5])
+    sk_model = sklearn.preprocessing.TargetEncoder(
+        target_type="continuous", random_state=42
+    ).fit(X, y)
+
+    with pytest.raises(UnsupportedOnGPU, match="both None and NaN"):
+        TargetEncoder.from_sklearn(sk_model)
 
 
 def test_label_encoder():

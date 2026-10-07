@@ -24,6 +24,7 @@ from cuml.internals.validation import (
     check_is_fitted,
     check_random_seed,
 )
+from cuml.preprocessing.encoders import _cats_to_series, _safe_is_nan
 
 
 class TargetEncoder(InteropMixin, Base):
@@ -760,16 +761,24 @@ class TargetEncoder(InteropMixin, Base):
         # This gives exact compatibility with no approximation
         encode_all = []
         for i, col in enumerate(x_cols):
-            # hardcode `nan_as_null=True` (cudf's default) so the
-            # behavior doesn't switch when cudf.pandas is active. Missing
-            # categories have to be null to match the input data, which
-            # `check_cudf` normalizes the same way.
+            cats = model.categories_[i]
+            # sklearn sorts missing values last, `None` before `NaN`. It
+            # keeps them as two categories, cuML has only one.
+            if (
+                cats.dtype == np.object_
+                and len(cats) > 1
+                and cats[-2] is None
+                and _safe_is_nan(cats[-1])
+            ):
+                raise UnsupportedOnGPU(
+                    f"Feature {i} has both None and NaN as categories"
+                )
+            # Missing categories have to be null to match the input data,
+            # which `check_cudf` normalizes the same way. `_cats_to_series`
+            # hardcodes `nan_as_null=True` (cudf's default) so the behavior
+            # doesn't switch when cudf.pandas is active.
             encode_all_i = cudf.DataFrame(
-                {
-                    col: model.categories_[i],
-                    "out": model.encodings_[i],
-                },
-                nan_as_null=True,
+                {col: _cats_to_series(cats), "out": model.encodings_[i]}
             )
             encode_all.append(encode_all_i)
 
@@ -819,6 +828,18 @@ class TargetEncoder(InteropMixin, Base):
             raise UnsupportedOnCPU(
                 f"`multi_feature_mode={self.multi_feature_mode!r}` is not supported"
             )
+
+        # sklearn treats `None` and `NaN` as different categories, cuML has
+        # one missing category. Export it as both so that sklearn accepts
+        # either, in sklearn's order (`None` before `NaN`, sorted last).
+        for i, (cats, enc) in enumerate(zip(categories_cpu, encodings_list)):
+            if cats.dtype == np.object_ and (
+                cats[-1] is None or _safe_is_nan(cats[-1])
+            ):
+                categories_cpu[i] = np.concatenate(
+                    [cats[:-1], np.array([None, np.nan], dtype=object)]
+                )
+                encodings_list[i] = np.append(enc, enc[-1])
 
         return {
             "encodings_": encodings_list,
