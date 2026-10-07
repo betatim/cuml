@@ -37,6 +37,11 @@ recalling them.
   `build_kwds` keys and `output_type` values.
 - Run the code and read the errors: removed arguments raise `TypeError`, removed modules
   `ModuleNotFoundError`, invalid values usually list the valid ones.
+- Treat deprecated APIs as removed: do not recommend anything that emits a `FutureWarning` or
+  is marked deprecated in its docstring, even if it still works in the installed version.
+  Deprecation warnings only appear when the code runs, so run the code you suggest (on small
+  data if needed) with `python -W always::FutureWarning` and read the warnings; they name the
+  replacement.
 - For `cuml.accel`, see below for how to find out what runs on the GPU.
 
 ## Step 2: check code for removed APIs
@@ -46,6 +51,10 @@ the user's code and on code you write, before presenting it. It reports removed 
 replacement the installed cuML does not reveal, with the replacement, for example
 `cuml.fil` (use nvForest), `SVC(probability=True)` (use `CalibratedClassifierCV`) and
 renamed UMAP/HDBSCAN `build_kwds` keys that are silently ignored.
+
+The checker only knows about these few APIs. An empty result does not mean the code is
+current, and it says nothing about whether `cuml.accel` runs it on the GPU; still do Step 1
+and check `cuml.accel` fallbacks as described below.
 
 Behaviour that changed without an API change:
 - RandomForest is reproducible with `random_state` alone (since 25.10). Do not set

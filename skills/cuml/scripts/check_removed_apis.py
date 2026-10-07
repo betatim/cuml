@@ -322,7 +322,12 @@ def main(argv=None):
                 )
             print(f"{f.path}:{f.line}: {f.api} ({where}) -> {f.replacement}")
         if not findings:
-            print("No deprecated or removed cuML APIs found.")
+            print("None of the APIs this checker knows about were found.")
+        print(
+            "Note: this checker only covers a few removed APIs whose replacement cannot be "
+            "found by inspecting the installed cuML. It does not check other deprecations "
+            "or whether cuml.accel runs the code on the GPU (use `python -m cuml.accel -v`)."
+        )
     return 1 if any(f.status == "removed" for f in findings) else 0
 
 
