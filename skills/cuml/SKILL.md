@@ -56,7 +56,7 @@ The checker only knows about these few APIs. An empty result does not mean the c
 current, and it says nothing about whether `cuml.accel` runs it on the GPU; still do Step 1
 and check `cuml.accel` fallbacks as described below.
 
-Behaviour that changed without an API change:
+Behavior that changed without an API change:
 - RandomForest is reproducible with `random_state` alone (since 25.10). Do not set
   `n_streams=1` "for determinism"; that advice is outdated and only slows training.
 - `KMeans.transform` returns Euclidean, not squared, distances (since 26.10).
