@@ -1173,15 +1173,24 @@ def test_quantile_transformer_subsample_default_deprecation():
         qt.fit(X)
     assert qt.get_params()["subsample"] == "warn"
 
+    X_sparse = cpx.scipy.sparse.csc_array(X)
+    qt_sparse = cuQuantileTransformer(n_quantiles=50)
+    with pytest.warns(FutureWarning, match="default value of `subsample`"):
+        qt_sparse.fit(X_sparse)
+
     with warnings.catch_warnings():
         warnings.simplefilter("error", FutureWarning)
         qt_explicit = cuQuantileTransformer(
             n_quantiles=50, subsample=100_000
         ).fit(X)
+        qt_sparse_explicit = cuQuantileTransformer(
+            n_quantiles=50, subsample=100_000
+        ).fit(X_sparse)
         cuQuantileTransformer(n_quantiles=50, subsample=10_000).fit(X)
         cu_quantile_transform(X, n_quantiles=50)
 
     assert_allclose(qt.quantiles_, qt_explicit.quantiles_)
+    assert_allclose(qt_sparse.quantiles_, qt_sparse_explicit.quantiles_)
 
 
 @pytest.mark.filterwarnings(
