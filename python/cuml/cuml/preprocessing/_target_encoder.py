@@ -347,13 +347,7 @@ class TargetEncoder(InteropMixin, Base):
         # Extract unique categories for each feature
         self.categories_ = []
         for col in x_cols:
-            cats = df[col].drop_duplicates().sort_values()
-            if cudf.api.types.is_string_dtype(cats.dtype):
-                # Like sklearn, represent missing strings as None
-                # (`to_numpy` would give NaN)
-                cats = np.array(cats.to_arrow().to_pylist(), dtype=object)
-            else:
-                cats = cats.to_numpy()
+            cats = df[col].drop_duplicates().sort_values().to_numpy()
             self.categories_.append(cats)
 
         if self.multi_feature_mode not in {"combination", "independent"}:
@@ -533,12 +527,15 @@ class TargetEncoder(InteropMixin, Base):
         Uses a merge rather than comparing values so that a missing
         category matches the missing key in `encode_all`.
         """
-        # hardcode `nan_as_null=True` (cudf's default) so the behavior
-        # doesn't switch when cudf.pandas is active. A missing category has
-        # to be null to match the null key in `encode_all`.
+        # A missing category has to be null to match the null key in
+        # `encode_all`. `_cats_to_series` hardcodes `nan_as_null=True`
+        # (cudf's default) so the behavior doesn't switch when cudf.pandas
+        # is active.
         cats = cudf.DataFrame(
-            {col: categories, "pos": cp.arange(len(categories))},
-            nan_as_null=True,
+            {
+                col: _cats_to_series(categories),
+                "pos": cp.arange(len(categories)),
+            }
         )
         cats = cats.merge(encode_all[[col, "out"]], on=col, how="left")
         out = cats.sort_values("pos")["out"].fillna(float(self.mean))

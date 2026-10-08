@@ -404,3 +404,15 @@ def test_targetencoder_missing_category_fit_transform(kind, stat):
 
     answer = np.array([6.5, 4.5, 5.5, 2.5, 3.5, 1.5])[:, None]
     np.testing.assert_allclose(train_encoded, answer)
+
+
+@pytest.mark.parametrize("kind", ["numpy-object", "pandas-object", "cudf-str"])
+def test_targetencoder_missing_string_category_is_nan(kind):
+    """Like `OneHotEncoder`, a missing string category is `NaN` in
+    `categories_`, whichever missing value the input used."""
+    X = _make_missing_X(["a", "b", None, "a"], kind)
+    encoder = TargetEncoder().fit(X, np.array([1.5, 2.5, 3.5, 4.5]))
+
+    categories = encoder.categories_[0]
+    assert categories[:-1].tolist() == ["a", "b"]
+    assert isinstance(categories[-1], float) and np.isnan(categories[-1])
