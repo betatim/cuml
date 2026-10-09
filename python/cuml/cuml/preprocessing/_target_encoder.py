@@ -741,14 +741,6 @@ class TargetEncoder(InteropMixin, Base):
         sklearn always uses independent per-feature encoding, so we set up
         cuML to use independent mode as well for exact compatibility.
         """
-        # Handle string categories (object dtype) - keep as numpy arrays
-        # since cupy doesn't support object dtype
-        categories_gpu = []
-        for cat in model.categories_:
-            if cat.dtype == np.object_:
-                categories_gpu.append(cat)  # Keep as numpy array
-            else:
-                categories_gpu.append(cp.asarray(cat))
         n_features = len(model.categories_)
 
         # Generate column names matching cuML's internal format
@@ -756,34 +748,46 @@ class TargetEncoder(InteropMixin, Base):
 
         # sklearn uses independent encoding, so we always use independent mode
         # This gives exact compatibility with no approximation
+        categories_gpu = []
+        encodings = []
         encode_all = []
         for i, col in enumerate(x_cols):
             cats = model.categories_[i]
+            enc = model.encodings_[i]
             # sklearn sorts missing values last, `None` before `NaN`. It
-            # keeps them as two categories, cuML has only one.
+            # keeps them as two categories, cuML has only one. `as_sklearn`
+            # exports cuML's missing category as both, with equal encodings.
             if (
                 cats.dtype == np.object_
                 and len(cats) > 1
                 and cats[-2] is None
                 and _safe_is_nan(cats[-1])
             ):
-                raise UnsupportedOnGPU(
-                    f"Feature {i} has both None and NaN as categories"
-                )
+                if enc[-2] != enc[-1]:
+                    raise UnsupportedOnGPU(
+                        f"Feature {i} has both None and NaN as categories "
+                        "with different encodings"
+                    )
+                cats = np.delete(cats, -2)
+                enc = np.delete(enc, -2)
+            # Keep object dtype categories as numpy arrays since cupy
+            # doesn't support object dtype
+            categories_gpu.append(
+                cats if cats.dtype == np.object_ else cp.asarray(cats)
+            )
+            encodings.append(cp.asarray(enc))
             # Missing categories have to be null to match the input data,
             # which `check_cudf` normalizes the same way. `_cats_to_series`
             # hardcodes `nan_as_null=True` (cudf's default) so the behavior
             # doesn't switch when cudf.pandas is active.
             encode_all_i = cudf.DataFrame(
-                {col: _cats_to_series(cats), "out": model.encodings_[i]}
+                {col: _cats_to_series(cats), "out": enc}
             )
             encode_all.append(encode_all_i)
 
         return {
             "encode_all": encode_all,
-            "_encodings_per_feature": [
-                cp.asarray(enc) for enc in model.encodings_
-            ],
+            "_encodings_per_feature": encodings,
             "categories_": categories_gpu,
             "classes_": model.classes_,
             "_n_features_out": n_features,  # sklearn always uses independent mode

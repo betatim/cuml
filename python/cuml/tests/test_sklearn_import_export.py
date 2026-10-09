@@ -1164,11 +1164,13 @@ def test_target_encoder_missing_category(kind):
 
     cu_model2 = TargetEncoder.from_sklearn(sk_model)
     sk_model2 = cu_model.as_sklearn()
+    roundtrip = TargetEncoder.from_sklearn(sk_model2)
 
     assert_allclose(cu_model.transform(X_test), expected)
     assert_allclose(sk_model.transform(X_test), expected)
     assert_allclose(cu_model2.transform(X_test), expected)
     assert_allclose(sk_model2.transform(X_test), expected)
+    assert_allclose(roundtrip.transform(X_test), expected)
 
     # sklearn treats `None` and `NaN` as different categories, cuML has only
     # one missing category. The exported model has to accept either. This is
