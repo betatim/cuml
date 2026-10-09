@@ -349,11 +349,22 @@ def _make_missing_X(values, kind):
         return np.array([codes[v] for v in values])[:, None]
     elif kind == "pandas-object":
         return pandas.DataFrame({"category": values})
+    elif kind == "pandas-string":
+        # Nullable string dtype, missing values are `pd.NA`
+        return pandas.DataFrame(
+            {"category": pandas.array(values, dtype="string")}
+        )
     elif kind == "cudf-str":
         return cudf.DataFrame({"category": values})
 
 
-MISSING_KINDS = ["numpy-object", "numpy-float", "pandas-object", "cudf-str"]
+MISSING_KINDS = [
+    "numpy-object",
+    "numpy-float",
+    "pandas-object",
+    "pandas-string",
+    "cudf-str",
+]
 
 
 @pytest.mark.parametrize("kind", MISSING_KINDS)
@@ -406,7 +417,9 @@ def test_targetencoder_missing_category_fit_transform(kind, stat):
     np.testing.assert_allclose(train_encoded, answer)
 
 
-@pytest.mark.parametrize("kind", ["numpy-object", "pandas-object", "cudf-str"])
+@pytest.mark.parametrize(
+    "kind", ["numpy-object", "pandas-object", "pandas-string", "cudf-str"]
+)
 def test_targetencoder_missing_string_category_is_nan(kind):
     """Like `OneHotEncoder`, a missing string category is `NaN` in
     `categories_`, whichever missing value the input used."""

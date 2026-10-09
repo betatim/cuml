@@ -24,7 +24,11 @@ from cuml.internals.validation import (
     check_is_fitted,
     check_random_seed,
 )
-from cuml.preprocessing.encoders import _cats_to_series, _safe_is_nan
+from cuml.preprocessing.encoders import (
+    _cats_to_series,
+    _compute_categories,
+    _safe_is_nan,
+)
 
 
 class TargetEncoder(InteropMixin, Base):
@@ -344,11 +348,7 @@ class TargetEncoder(InteropMixin, Base):
         df = self._check_X_y(X, y)
         x_cols = [n for n in df.columns.tolist() if n.startswith("X_")]
 
-        # Extract unique categories for each feature
-        self.categories_ = []
-        for col in x_cols:
-            cats = df[col].drop_duplicates().sort_values().to_numpy()
-            self.categories_.append(cats)
+        self.categories_ = _compute_categories(df[x_cols])
 
         if self.multi_feature_mode not in {"combination", "independent"}:
             raise ValueError(
