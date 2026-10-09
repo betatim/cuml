@@ -2325,13 +2325,12 @@ class QuantileTransformer(
 
     Parameters
     ----------
-    n_quantiles : int, optional (default=1000 or n_samples)
+    n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        If n_quantiles is larger than the number of samples, n_quantiles is set
-        to the number of samples as a larger number of quantiles does not give
-        a better approximation of the cumulative distribution function
-        estimator.
+
+        .. versionchanged:: 26.12
+            `n_quantiles` is no longer capped at the number of samples.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
@@ -2342,10 +2341,11 @@ class QuantileTransformer(
         matrix are discarded to compute the quantile statistics. If False,
         these entries are treated as zeros.
 
-    subsample : int, optional (default=100_000)
+    subsample : int or None, optional (default=100_000)
         Maximum number of samples used to estimate the quantiles for
         computational efficiency. Note that the subsampling procedure may
         differ for value-identical sparse and dense matrices.
+        Disable subsampling by setting `subsample=None`.
 
         .. deprecated:: 26.12
             The default value of `subsample` will change from 100_000 to
@@ -2365,8 +2365,8 @@ class QuantileTransformer(
     Attributes
     ----------
     n_quantiles_ : integer
-        The actual number of quantiles used to discretize the cumulative
-        distribution function.
+        The number of quantiles used to discretize the cumulative
+        distribution function. Always equal to `n_quantiles`.
 
     quantiles_ : ndarray, shape (n_quantiles, n_features)
         The values corresponding the quantiles of reference.
@@ -2444,10 +2444,15 @@ class QuantileTransformer(
             # Take a subsample of `X`
             from sklearn.utils import resample
             X = resample(
-                X, replace=False, n_samples=self._subsample, random_state=random_state
+                X,
+                replace=True,
+                n_samples=self._subsample,
+                random_state=random_state,
             )
 
-        self.quantiles_ = cpu_np.nanpercentile(X, references, axis=0)
+        self.quantiles_ = cpu_np.nanpercentile(
+            X, references, axis=0, method="averaged_inverted_cdf"
+        )
         # Due to floating-point precision error in `np.nanpercentile`,
         # make sure that quantiles are monotonically increasing.
         # Upstream issue in numpy:
@@ -2470,7 +2475,8 @@ class QuantileTransformer(
         for feature_idx in range(n_features):
             column_nnz_data = X.data[X.indptr[feature_idx]:
                                      X.indptr[feature_idx + 1]]
-            if len(column_nnz_data) > self._subsample:
+            if (self._subsample is not None
+                    and len(column_nnz_data) > self._subsample):
                 column_data = np.zeros(shape=self._subsample, dtype=X.dtype)
                 column_subsample = (
                     self._subsample
@@ -2497,7 +2503,8 @@ class QuantileTransformer(
             else:
                 self.quantiles_.append(
                     cpu_np.nanpercentile(np.asnumpy(column_data),
-                                         np.asnumpy(references)))
+                                         np.asnumpy(references),
+                                         method="averaged_inverted_cdf"))
         self.quantiles_ = cpu_np.transpose(np.asnumpy(self.quantiles_))
 
         # due to floating-point precision error in `np.nanpercentile`,
@@ -2538,26 +2545,21 @@ class QuantileTransformer(
             )
             self._subsample = 100_000
 
-        if self._subsample <= 0:
-            raise ValueError("Invalid value for 'subsample': %d. "
-                             "The number of subsamples must be at least one."
-                             % self._subsample)
+        if self._subsample is not None:
+            if self._subsample <= 0:
+                raise ValueError("Invalid value for 'subsample': %d. "
+                                 "The number of subsamples must be at least "
+                                 "one." % self._subsample)
 
-        if self.n_quantiles > self._subsample:
-            raise ValueError("The number of quantiles cannot be greater than"
-                             " the number of samples used. Got {} quantiles"
-                             " and {} samples.".format(self.n_quantiles,
-                                                       self._subsample))
+            if self.n_quantiles > self._subsample:
+                raise ValueError("The number of quantiles cannot be greater"
+                                 " than the number of samples used. Got {}"
+                                 " quantiles and {} samples.".format(
+                                     self.n_quantiles, self._subsample))
 
         X = self._check_inputs(X, in_fit=True, copy=False)
-        n_samples = X.shape[0]
 
-        if self.n_quantiles > n_samples:
-            warnings.warn("n_quantiles (%s) is greater than the total number "
-                          "of samples (%s). n_quantiles is set to "
-                          "n_samples."
-                          % (self.n_quantiles, n_samples))
-        self.n_quantiles_ = max(1, min(self.n_quantiles, n_samples))
+        self.n_quantiles_ = self.n_quantiles
 
         rng = check_random_state(self.random_state)
 
@@ -2775,13 +2777,12 @@ def quantile_transform(X, *, axis=0, n_quantiles=1000,
         Axis used to compute the means and standard deviations along. If 0,
         transform each feature, otherwise (if 1) transform each sample.
 
-    n_quantiles : int, optional (default=1000 or n_samples)
+    n_quantiles : int, optional (default=1000)
         Number of quantiles to be computed. It corresponds to the number
         of landmarks used to discretize the cumulative distribution function.
-        If n_quantiles is larger than the number of samples, n_quantiles is set
-        to the number of samples as a larger number of quantiles does not give
-        a better approximation of the cumulative distribution function
-        estimator.
+
+        .. versionchanged:: 26.12
+            `n_quantiles` is no longer capped at the number of samples.
 
     output_distribution : str, optional (default='uniform')
         Marginal distribution for the transformed data. The choices are
@@ -2792,10 +2793,11 @@ def quantile_transform(X, *, axis=0, n_quantiles=1000,
         matrix are discarded to compute the quantile statistics. If False,
         these entries are treated as zeros.
 
-    subsample : int, optional (default=1e5)
+    subsample : int or None, optional (default=100_000)
         Maximum number of samples used to estimate the quantiles for
         computational efficiency. Note that the subsampling procedure may
         differ for value-identical sparse and dense matrices.
+        Disable subsampling by setting `subsample=None`.
 
     random_state : int, RandomState instance or None, optional (default=None)
         Determines random number generation for subsampling and smoothing
