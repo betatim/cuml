@@ -442,13 +442,10 @@ NOT_YET_CONVERTED = {
     "UMAP",
 }
 
-# `*MG` classes are excluded: they need a comms handle, have a different `fit`
-# signature, and are only imported when used (so may or may not be collected)
 ESTIMATORS = {
     name: cls
     for name, cls in get_all_base_subclasses().items()
     if "Base" not in name
-    and not name.endswith("MG")
     and cls.__module__.startswith("cuml.")
     and not cls.__module__.startswith("cuml.solvers")
 }
