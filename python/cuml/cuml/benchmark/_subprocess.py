@@ -56,7 +56,7 @@ def run_command(command: list[str], environment: dict[str, str]) -> None:
     decoder = codecs.getincrementaldecoder(locale.getpreferredencoding(False))(
         errors="replace"
     )
-    stderr_lines, received = [], 0
+    stderr_lines, received, diagnostics = [], 0, b""
     drain_deadline = None
     try:
         while True:
@@ -65,7 +65,9 @@ def run_command(command: list[str], environment: dict[str, str]) -> None:
                 _, diagnostics = process.communicate(timeout=0.1)
                 complete = True
             except subprocess.TimeoutExpired as exc:
-                diagnostics = exc.stderr or b""
+                # stderr is None when waiting for exit times out after EOF;
+                # nothing new arrived, so keep the previous buffer.
+                diagnostics = exc.stderr or diagnostics
             text = decoder.decode(diagnostics[received:], final=complete)
             received = len(diagnostics)
             sys.stderr.write(text)

@@ -2584,6 +2584,22 @@ def test_run_command_forwards_output(monkeypatch, capfd):
     assert captured.err == "progress €\n"
 
 
+def test_run_command_stderr_eof_before_exit(monkeypatch, capfd):
+    # Waiting for exit after stderr EOF times out without returning stderr.
+    monkeypatch.setattr(
+        runner.locale, "getpreferredencoding", lambda _: "utf-8"
+    )
+    script = (
+        "import os, sys, time; "
+        "sys.stderr.buffer.write(b'progress \\xe2'); sys.stderr.flush(); "
+        "time.sleep(0.3); "
+        "sys.stderr.buffer.write(b'\\x82\\xac\\n'); sys.stderr.flush(); "
+        "os.close(2); time.sleep(0.5)"
+    )
+    runner.run_command([sys.executable, "-c", script], dict(os.environ))
+    assert capfd.readouterr().err == "progress €\n"
+
+
 @pytest.mark.skipif(
     os.name != "posix", reason="process group cleanup is POSIX-specific"
 )
